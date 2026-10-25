@@ -1,0 +1,12 @@
+# Copyrighted game data: never commit
+*.sfc
+*.smc
+*.sfc.*
+roms/*
+!roms/README.md
+zelda3_assets.dat
+# Ghidra projects / analysis output
+*.gpr
+*.rep/
+*.lock
+work/
