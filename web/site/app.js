@@ -35,11 +35,15 @@ const kvDel = (k) => kv('readwrite', (s) => s.delete(k));
 
 // Assets are tied to the zelda3 version the game was built from.
 let assetsKey = 'assets';
+// Each deploy gets a new build id. Game files are requested with ?v=<id> so the
+// browser never runs a stale cached copy after an update.
+let ver = '';
 async function loadBuildInfo() {
   try {
-    const info = await (await fetch('build.json')).json();
+    const info = await (await fetch('build.json', { cache: 'no-cache' })).json();
     assetsKey = 'assets-' + info.zelda3;
-  } catch { /* keep default key */ }
+    if (info.build) ver = '?v=' + info.build;
+  } catch { /* keep defaults */ }
 }
 
 // --- ROM -> assets ---------------------------------------------------------
@@ -62,7 +66,7 @@ async function romFromFile(file) {
 
 function extractAssets(rom) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('extract-worker.js', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('extract-worker.js' + ver, import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
       if (e.data.progress) setStatus(e.data.progress);
       else {
@@ -114,8 +118,8 @@ async function startGame() {
   if (!assets) { showNeedRom(); return; }
   setStatus('Starting game…');
   const [{ default: createZelda3 }, ini] = await Promise.all([
-    import('./zelda3.js'),
-    fetch('zelda3.ini').then((r) => r.text()),
+    import('./zelda3.js' + ver),
+    fetch('zelda3.ini' + ver).then((r) => r.text()),
   ]);
 
   const canvas = $('canvas');
@@ -129,6 +133,7 @@ async function startGame() {
 
   game = await createZelda3({
     canvas,
+    locateFile: (path, dir) => dir + path + ver,
     print: (s) => console.log('[zelda3]', s),
     printErr: (s) => console.warn('[zelda3]', s),
     onFatalError: (msg) => { $('game-status').textContent = 'Error: ' + msg; },
