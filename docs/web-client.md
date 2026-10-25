@@ -75,6 +75,33 @@ uses CRLF line endings). Assets are cached per zelda3 commit, so players re-extr
 ## Next steps
 
 - **Multiplayer** is in: see [multiplayer.md](multiplayer.md).
-- **Randomizer ROMs** (e.g. ALttPR) patch the game's code, so zelda3 can't run them. The plan is a
-  second backend: an SNES emulator core in WebAssembly running the player's ROM. Randomizers keep
-  vanilla's RAM layout for items, so the same sync works on both backends.
+- **Randomizer seeds** run on the SNES emulator, below.
+
+## Randomizer seeds
+
+Randomizers (ALttPR, the door and entrance randomizers, Archipelago) patch the game's code, so
+zelda3 can't play them. The page runs any other ROM based on the game on an SNES emulator core
+instead: [LakeSnes](https://github.com/dinkc64/LakeSnes) (MIT, dinkc64's maintained fork), pinned
+in `build.sh` and compiled to `dist/snes.js` + `snes.wasm` (about 140 KB). It takes about 3 ms per
+frame in Chromium.
+
+- **Loading.** The ROM picker takes either ROM. `site/rom-info.js` identifies it: the US ROM goes
+  to zelda3 as before; anything else that looks like the game (LoROM, the game's reset code) is
+  kept in IndexedDB (`seed-rom`, this browser only) and offered as **Play seed**. Randomizers are
+  generated from the Japanese 1.0 ROM, which the player supplies to the randomizer, not to us.
+- **Which seed.** Randomizers write a five-icon code for the seed at ROM offset `$180215` (shown on
+  the file select screen). The game id is the ROM title plus that code, so cosmetic options
+  (Link's sprite, heart color, music) don't make friends' copies differ. ROMs without a code use
+  their SHA-1.
+- **Running it.** `site/emu.js` runs frames at 60.1 Hz from `requestAnimationFrame`, draws the
+  512x448 picture to the canvas, plays sound through an AudioWorklet, and maps keys from the same
+  `keymap.ini` the zelda3 build uses (copied to `dist/`), plus gamepads. Tab held is turbo;
+  Shift+F1-F10 saves a state, F1-F10 loads it. Battery saves and states are in IndexedDB per game
+  id, so each seed has its own save files.
+- **C side.** `web/src/emu_api.c` exports the frame, picture, sound, RAM, VRAM/CGRAM, SRAM and
+  state functions, and `emu_call(addr)`, which runs one of the game's own subroutines while its
+  main loop is idle (`LDA $12 : BEQ` at `$00:8034`). The multiplayer backend
+  (`site/sync/snes-backend.js`) uses it to redraw the HUD and reload Link's sword, shield and armor
+  after another player's unlock arrives: it finds those routines at their US or Japanese 1.0
+  addresses by their first bytes, and skips a redraw if a randomizer rewrote the routine.
+

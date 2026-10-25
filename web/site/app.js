@@ -1,11 +1,15 @@
 // LTTP Online page logic: get assets from the player's ROM (once), then run the game.
+// The US ROM runs on zelda3 (a C reimplementation); any other ROM based on the
+// game, such as a randomizer seed, runs on an SNES emulator core (emu.js).
 import { SyncClient, resolveSyncUrl } from './sync/client.js';
 import { zelda3Backend } from './sync/zelda3-backend.js';
-import { isRoomCode, newRoomCode } from './sync/room.js';
+import { snesBackend } from './sync/snes-backend.js';
+import { isRoomCode, newRoomCode, VANILLA_GAME } from './sync/room.js';
+import { identifyRom, stripHeader } from './rom-info.js';
 import { startGhosts } from './ghosts.js';
 
-const US_ROM_SHA1 = '6d4f10a8b10e10dbe624cb23cf03b88bb8252973';
 const GAME_DIR = '/zelda3';
+const SEED_KEY = 'seed-rom';   // the randomizer ROM, kept in this browser only
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -55,21 +59,9 @@ async function loadBuildInfo() {
 }
 
 // --- ROM -> assets ---------------------------------------------------------
-async function sha1Hex(bytes) {
-  const digest = await crypto.subtle.digest('SHA-1', bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 async function romFromFile(file) {
-  let rom = new Uint8Array(await file.arrayBuffer());
-  // Strip a 512-byte copier header (.smc files often have one).
-  if ((rom.length & 0xfffff) === 0x200) rom = rom.slice(0x200);
-  const hash = await sha1Hex(rom);
-  if (hash !== US_ROM_SHA1) {
-    throw new Error('This ROM isn\'t the US version of A Link to the Past (SHA-1 ' + hash +
-      '). The asset tool needs the unmodified US ROM.');
-  }
-  return rom;
+  const rom = stripHeader(new Uint8Array(await file.arrayBuffer()));
+  return { rom, info: await identifyRom(rom) };
 }
 
 function extractAssets(rom) {
@@ -92,7 +84,15 @@ async function onRomChosen(file) {
   const progress = $('progress');
   try {
     setStatus('Checking ROM…');
-    const rom = await romFromFile(file);
+    const { rom, info } = await romFromFile(file);
+    if (!info.vanilla) {
+      // A randomizer seed (or other version): the emulator plays the ROM
+      // itself, so keep it in this browser for next time.
+      await kvSet(SEED_KEY, { rom, info, name: file.name });
+      setStatus(`Loaded ${info.label}. It runs on the SNES emulator.`);
+      showReady();
+      return;
+    }
     progress.hidden = false;
     const t0 = performance.now();
     const assets = await extractAssets(rom);
@@ -107,10 +107,20 @@ async function onRomChosen(file) {
   }
 }
 
-function showReady() {
+// Lists the games this browser has ready: the US game (extracted assets) and
+// the last randomizer seed loaded.
+async function showReady() {
+  const [assets, seed] = await Promise.all([kvGet(assetsKey), kvGet(SEED_KEY)]);
+  if (!assets && !seed) { showNeedRom(); return; }
   $('need-rom').hidden = true;
   $('ready').hidden = false;
-  $('play').focus();
+  $('ready-vanilla').hidden = !assets;
+  $('ready-seed').hidden = !seed;
+  if (seed) {
+    $('seed-label').textContent = seed.info.code ? seed.info.code.join(' · ') : seed.info.label;
+    $('seed-title').textContent = seed.info.title ? `(${seed.info.title})` : '';
+  }
+  (assets ? $('play') : $('play-seed')).focus();
 }
 
 function showNeedRom() {
@@ -163,16 +173,48 @@ async function startGame() {
     }],
   });
 
-  $('setup').hidden = true;
-  $('multiplayer').hidden = true;
-  $('game').hidden = false;
+  showGame();
   game.callMain([]);
   canvas.focus();
   window.lttp = game;  // handy for debugging from the console
-  startSync(game);
+  startSync(zelda3Backend(game), VANILLA_GAME);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') persistSaves();
   });
+}
+
+function showGame() {
+  $('setup').hidden = true;
+  $('multiplayer').hidden = true;
+  $('game').hidden = false;
+}
+
+// A randomizer seed on the SNES emulator core.
+async function startSeed() {
+  const seed = await kvGet(SEED_KEY);
+  if (!seed) { showNeedRom(); return; }
+  setStatus('Starting emulator…');
+  const [{ default: createSnes }, { startEmulator }, keymap] = await Promise.all([
+    import('./snes.js' + ver),
+    import('./emu.js' + ver),
+    fetch('keymap.ini' + ver).then((r) => r.text()),
+  ]);
+  const canvas = $('canvas');
+  const emu = await startEmulator({
+    createSnes: (opts) => createSnes({ locateFile: (path, dir) => dir + path + ver, ...opts }),
+    canvas,
+    rom: seed.rom,
+    keymap,
+    store: { get: kvGet, set: kvSet },
+    gameId: seed.info.gameId,
+    onError: (msg) => { $('game-status').textContent = 'Error: ' + msg; },
+  });
+  emu.onMessage = (text) => showNotice(escapeHtml(text));
+  showGame();
+  $('game-status').textContent = seed.info.code ? 'Seed ' + seed.info.code.join(' · ') : seed.info.label;
+  canvas.focus();
+  window.lttpEmu = emu;  // for debugging
+  startSync(snesBackend(emu), { id: seed.info.gameId, label: seed.info.label });
 }
 
 // --- Multiplayer -------------------------------------------------------------
@@ -206,24 +248,30 @@ function showNotice(html) {
 }
 const escapeHtml = (t) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function startSync(game) {
+function startSync(backend, game) {
   if (!roomCode) return;
   const statusEl = $('mp-status');
   const label = { connecting: 'connecting…', reconnecting: 'reconnecting…', connected: '',
     unreachable: "can't reach the sync server, playing solo for now", error: 'sync error' };
-  const backend = zelda3Backend(game);
   const sync = new SyncClient({
     url: resolveSyncUrl(buildInfo),
     room: roomCode,
     name: $('mp-name').value.trim() || 'Link',
     backend,
+    game,
     onStatus: ({ state, detail, players, you }) => {
       let text = `Room ${roomCode}: ` + (label[state] ?? state);
       if (state === 'connected') {
         text += players.map((p) => (p.id === you ? p.name + ' (you)' : p.name)).join(', ');
       }
+      if (state === 'wrong-game') {
+        // Everyone in a room plays the same seed; this player loaded another.
+        text = `Room ${roomCode} is playing ${detail}, but you loaded ${game.label}. ` +
+          'Load the same seed to join; playing solo for now.';
+        detail = '';
+      }
       statusEl.textContent = text + (detail ? ` (${detail})` : '');
-      statusEl.classList.toggle('error', state === 'unreachable' || state === 'error');
+      statusEl.classList.toggle('error', state === 'unreachable' || state === 'error' || state === 'wrong-game');
     },
     onNotice: ({ name, what }) => showNotice(`<b>${escapeHtml(name)}</b> ${escapeHtml(what)}`),
   });
@@ -262,13 +310,27 @@ $('rom-input').addEventListener('change', (e) => {
   if (file) onRomChosen(file);
 });
 $('play').addEventListener('click', () => {
-  $('play').disabled = true;
-  startGame().catch((err) => { setStatus(err.message, true); $('play').disabled = false; });
+  $('play').disabled = $('play-seed').disabled = true;
+  startGame().catch((err) => { setStatus(err.message, true); $('play').disabled = $('play-seed').disabled = false; });
+});
+$('play-seed').addEventListener('click', () => {
+  $('play').disabled = $('play-seed').disabled = true;
+  startSeed().catch((err) => { setStatus(err.message, true); $('play').disabled = $('play-seed').disabled = false; });
 });
 $('forget').addEventListener('click', async () => {
   await kvDel(assetsKey);
   setStatus('');
-  showNeedRom();
+  showReady();
+});
+$('forget-seed').addEventListener('click', async () => {
+  await kvDel(SEED_KEY);
+  setStatus('');
+  showReady();
+});
+$('rom-input-2').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file) onRomChosen(file);
 });
 $('fullscreen').addEventListener('click', () => {
   $('game').requestFullscreen?.();
@@ -276,4 +338,4 @@ $('fullscreen').addEventListener('click', () => {
 });
 
 await loadBuildInfo();
-if (await kvGet(assetsKey)) showReady();
+await showReady();

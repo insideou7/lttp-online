@@ -121,3 +121,8 @@ input {
 }
 /* Other players' Links, drawn over the game (ghosts.js). */
 canvas.ghosts { position: absolute; pointer-events: none; image-rendering: pixelated; }
+
+.game-row { margin: 0 0 16px; }
+.game-row p { margin: 0 0 8px; }
+.muted { color: var(--muted); }
+.add-rom { display: inline-block; margin-left: 0; }

@@ -17,7 +17,8 @@
     <section id="setup" class="card">
       <div id="need-rom">
         <h2>Load your ROM</h2>
-        <p>Pick your own copy of the US ROM (<code>.sfc</code> or <code>.smc</code>).
+        <p>Pick your own copy of the US ROM (<code>.sfc</code> or <code>.smc</code>), or a
+          randomizer seed made from your ROM (ALttPR and other randomizers).
           It never leaves your computer: the game assets are extracted here, in your browser,
           and kept in this browser's storage so you only do this once.</p>
         <label class="button" for="rom-input">Choose ROM file</label>
@@ -25,9 +26,19 @@
       </div>
       <div id="ready" hidden>
         <h2>Ready</h2>
-        <p>Game assets are stored in this browser.</p>
-        <button id="play" class="button">Play</button>
-        <button id="forget" class="link">Use a different ROM</button>
+        <div id="ready-vanilla" class="game-row">
+          <p>A Link to the Past: game assets are stored in this browser.</p>
+          <button id="play" class="button">Play</button>
+          <button id="forget" class="link">Forget</button>
+        </div>
+        <div id="ready-seed" class="game-row" hidden>
+          <p>Randomizer seed <strong id="seed-label"></strong> <span id="seed-title" class="muted"></span>,
+            on the SNES emulator. Friends in your room need the same seed.</p>
+          <button id="play-seed" class="button">Play seed</button>
+          <button id="forget-seed" class="link">Forget</button>
+        </div>
+        <label class="link add-rom" for="rom-input-2">Load another ROM or seed</label>
+        <input id="rom-input-2" type="file" accept=".sfc,.smc,.bin" hidden>
       </div>
       <p id="status" role="status" aria-live="polite"></p>
       <progress id="progress" hidden></progress>
@@ -84,7 +95,9 @@
 
     <footer>
       <p>No game data is hosted here. You need your own legally obtained ROM.
-        zelda3 is MIT licensed (<a href="ZELDA3_LICENSE.txt">license</a>).</p>
+        zelda3 is MIT licensed (<a href="ZELDA3_LICENSE.txt">license</a>). Randomizer seeds run on
+        the <a href="https://github.com/dinkc64/LakeSnes">LakeSnes</a> SNES emulator, also MIT
+        (<a href="LAKESNES_LICENSE.txt">license</a>).</p>
     </footer>
   </main>
   <script type="module" src="app.js"></script>
