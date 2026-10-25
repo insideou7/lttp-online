@@ -182,6 +182,11 @@ export class MobSync {
       if (until > now) keep.add(s); else this.lease.delete(s);
     }
     for (let s = 0; s < 16; s++) if (ram.get(STATE + s) === S_CARRIED) keep.add(s);
+    // Something the owner's Link carries would sit on our Link's head (the
+    // game puts carried sprites over its own Link): leave it out. The ghost
+    // shows it over theirs, and once thrown it's an ordinary sprite again.
+    const state = SPRITE_TABLES.indexOf(STATE) * 16;
+    for (let s = 0; s < 16; s++) if (snap[state + s] === S_CARRIED) snap[state + s] = 0;
     writeSnapshot(ram, snap, keep);
     this.written = readSnapshot(ram);
     this.writtenKey = msg.k;

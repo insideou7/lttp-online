@@ -56,7 +56,8 @@ zelda3 is pinned to a commit in `build.sh` and patched with `web/patches/zelda3-
 `web/src/web_api.c` adds exports for the page: `web_ram()` (128 KiB WRAM), `web_ram_size()`,
 `web_sram()` (8 KiB SRAM), and `web_refresh()`, which redraws the HUD and gear after multiplayer
 sync changes them, plus `web_vram()`, `web_cgram()`, `web_obj_info()` and `web_obj_size()`, which
-let the page draw this player's Link for the others. From the console, `lttp.HEAPU8[lttp._web_ram() + 0x10]` is the current game
+let the page draw this player's Link for the others, and `web_map16_table()` to redraw overworld
+tiles other players changed. From the console, `lttp.HEAPU8[lttp._web_ram() + 0x10]` is the current game
 module, for example.
 
 The desktop OpenGL output is not built; the web config forces `OutputMethod = SDL`. The page's

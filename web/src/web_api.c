@@ -8,6 +8,7 @@
 #include "src/hud.h"
 #include "src/load_gfx.h"
 #include "snes/ppu.h"
+#include "src/overworld.h"
 
 // Work RAM ($7E0000-$7FFFFF), 128 KiB. The save file being played lives at
 // $7EF000-$7EF4FF (items at $7EF340+, hearts at $7EF36C, etc.).
@@ -27,6 +28,10 @@ EMSCRIPTEN_KEEPALIVE uint32 web_obj_info(void) {
   return g_zenv.ppu->objTileAdr1 | (uint32)g_zenv.ppu->objTileAdr2 << 16;
 }
 EMSCRIPTEN_KEEPALIVE int web_obj_size(void) { return g_zenv.ppu->objSize; }
+
+// The ROM's map16-to-map8 table (4 tile words per 16x16 overworld tile), to
+// redraw bushes and rocks other players changed (web/site/sync/tiles.js).
+EMSCRIPTEN_KEEPALIVE const uint16 *web_map16_table(void) { return GetMap16toMap8Table(); }
 
 // Redraw after multiplayer sync wrote another player's unlock into the save
 // area. mask: 1 HUD and equipped item, 2 sword, 4 shield, 8 armor and gloves.

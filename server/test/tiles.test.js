@@ -62,3 +62,47 @@ test('a pot lifted in one game disappears in the others, also for latecomers', a
   a.stop(); b.stop(); c.stop();
   server.close();
 });
+
+// Outdoors: a fake game in light world area 0x2C with a bush at map16 word 0x105.
+function fakeOutdoors() {
+  const g = fakeGame();
+  g.mem[0x10] = 0x09; g.mem[0x1B] = 0; g.mem[0x8A] = 0x2C;
+  g.mem[0x2000 + 0x105 * 2] = 0x36; g.mem[0x2000 + 0x105 * 2 + 1] = 0x00;   // bush
+  g.map16 = (v) => [v * 4, v * 4 + 1, v * 4 + 2, v * 4 + 3];
+  g.cutBush = () => { g.mem[0x2000 + 0x105 * 2] = 0xC7; g.mem[0x2000 + 0x105 * 2 + 1] = 0x0D; };   // 0xDC7
+  return g;
+}
+
+test('outdoors: a cut bush is redrawn from map16 and remembered', () => {
+  const g = fakeOutdoors();
+  const t = new RoomTiles(g, () => {});
+  t.tick(1, null);
+  assert.equal(t.b, 'o2c');
+  t.apply([0x2000 + 0x105 * 2, 0xC7, 0x2000 + 0x105 * 2 + 1, 0x0D, 0x12105, 0x55]);
+  assert.equal(g.mem[0x12105], 0);           // indoor-only region: ignored outdoors
+  const va = 0x0a + ((0x20a & 0x780) >> 1);   // byte offset 0x20a: left half, row 4
+  const t0 = 0xDC7 * 4;
+  const le = (v) => [v & 0xff, (v >> 8) & 0xff];
+  assert.deepEqual([...g.mem.slice(0x1002, 0x1002 + 17)], [
+    va >> 8, va & 0xff, 0, 3, ...le(t0), ...le(t0 + 1),
+    (va + 0x20) >> 8, (va + 0x20) & 0xff, 0, 3, ...le(t0 + 2), ...le(t0 + 3), 0xff]);
+  // In the game's list of changed tiles, to survive a trip indoors.
+  assert.equal(g.mem[0x4AC], 2);
+  assert.deepEqual([...g.mem.slice(0xF800, 0xF802)], [0x0a, 0x02]);
+  assert.deepEqual([...g.mem.slice(0xFA00, 0xFA02)], [0xC7, 0x0D]);
+});
+
+test('outdoors: a bush cut by one player is gone for the other', async () => {
+  const { server } = createServer();
+  await new Promise((r) => server.listen(0, r));
+  const url = `ws://127.0.0.1:${server.address().port}/sync`;
+  const ga = fakeOutdoors(), gb = fakeOutdoors();
+  const a = new SyncClient({ url, room: 'BXSH', name: 'A', backend: ga });
+  const b = new SyncClient({ url, room: 'BXSH', name: 'B', backend: gb });
+  a.start(); b.start();
+  await until(() => a.mobs.owner?.n === 2 && b.mobs.owner?.n === 2 && a.tiles.last && b.tiles.last);
+  gb.cutBush();
+  await until(() => ga.mem[0x2000 + 0x105 * 2 + 1] === 0x0D && ga.mem[0x14] === 1);
+  a.stop(); b.stop();
+  server.close();
+});
