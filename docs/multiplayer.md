@@ -8,8 +8,9 @@ the game in their browser and goes wherever they like; a small server relays onl
 | Items (bow tier, hookshot, rods, medallions, flute, mirror, gloves, boots, flippers, moon pearl...) | Rupees |
 | Sword, shield, armor | Bombs, arrows (the bow's "has arrows" half too) |
 | Heart containers and pieces of heart, magic upgrade | Current health and magic |
-| Bomb and arrow capacity upgrades | Small keys |
+| Bomb and arrow capacity upgrades | |
 | Bottles (owning one; a new one arrives empty) | What's in your bottles |
+| Small keys (one picked up counts for everyone; one used is spent for everyone) | |
 | Pendants, crystals, maps, compasses, big keys | Position, current screen, followers (Zelda, the old man...) |
 | Opened chests, doors, defeated bosses, heart pieces taken, bombed walls (dungeon and overworld flags) | Spawn point |
 | Story progress (Zelda rescued, Agahnim beaten...) | |
@@ -45,7 +46,8 @@ the status line says so; the client keeps retrying.
 
 - `web/site/sync/fields.js`: which save RAM bytes ($7EF000-$7EF3FF) are shared and how two values
   merge. Kinds: `bits` (OR; room and overworld flags, pendants...), `max` (item levels), `sum`
-  (heart quarters and capacity upgrades; each player's gains add up), `set` (last writer wins, for
+  (heart quarters and capacity upgrades; each player's gains add up), `counts` (small keys per
+  dungeon; ops carry +1 or -1, so pickups and doors both apply to everyone), `set` (last writer wins, for
   things the game can take away: the smiths borrow your sword, a Like Like eats your shield, the
   witch takes the mushroom).
 - `web/site/sync/client.js`: every 100 ms while a file is being played, compares the save area with
@@ -67,5 +69,4 @@ the status line says so; the client keeps retrying.
 - zelda3's optional "switch between bow and silver arrows" feature is undone by the sync (owning
   the silver bow is a shared level).
 - Rooms are in memory: restarting the server forgets them (players' own saves are unaffected).
-- Small keys are per player. A key one player picks up isn't available to the others, but doors
-  it opens are open for everyone.
+- If two players open locked doors with the room's last key at the same moment, both doors open.
