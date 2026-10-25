@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createServer } from '../index.js';
 import { SyncClient } from '../../web/site/sync/client.js';
-import { Room, VANILLA_GAME } from '../../web/site/sync/room.js';
+import { Room, VANILLA_GAME, PROTOCOL_VERSION } from '../../web/site/sync/room.js';
 import { snapshot } from '../../web/site/sync/fields.js';
 import { identifyRom } from '../../web/site/rom-info.js';
 import { findRoutines } from '../../web/site/sync/snes-backend.js';
@@ -22,7 +22,7 @@ test('the first player sets the room\'s game; others need the same one', () => {
   const a = room.connect(), b = room.connect(), c = room.connect();
   const welcome = sends(room.message(a, { t: 'hello', name: 'A', game: SEED_A }), 'welcome')[0].msg;
   assert.deepEqual(welcome.game, SEED_A);
-  assert.equal(welcome.v, 4);
+  assert.equal(welcome.v, PROTOCOL_VERSION);
   assert.equal(sends(room.message(b, { t: 'hello', name: 'B', game: SEED_A }), 'welcome').length, 1);
   const out = room.message(c, { t: 'hello', name: 'C', game: SEED_B });
   assert.deepEqual(sends(out, 'wrong-game')[0].msg.game, SEED_A);

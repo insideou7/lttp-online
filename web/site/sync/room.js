@@ -4,9 +4,10 @@
 //
 // Protocol (JSON messages):
 //   client -> server
-//     { t: 'hello', name, game? }          first message after connecting; game =
+//     { t: 'hello', name, game?, share? }  first message after connecting; game =
 //                                          { id, label } of the ROM played (v4+;
-//                                          clients before that play the US game)
+//                                          clients before that play the US game);
+//                                          share = it can send the seed (v5+)
 //     { t: 'sync', state }                 player is in game with this save;
 //                                          seeds the room if it has no state yet
 //     { t: 'ops', ops: [...] }             player's own new unlocks (see fields.js)
@@ -19,6 +20,13 @@
 //                                          or made a new sprite there (n)
 //     { t: 'tiles', k, b, c, f? }          surroundings changed (tiles.js) at place b:
 //                                          pairs of RAM address and byte; f = all so far
+//   Seed sharing (v5+, see seed-share.js). A page that hasn't joined yet asks
+//   what the room plays; a player who has the seed sends it as a patch against
+//   the original game, so no ROM ever goes through the server:
+//     { t: 'seed-get', have: [ids] }       before hello: what does the room play?
+//                                          have = game ids this page already has
+//     { t: 'seed-part', to, i, n, d }      player -> asker: part i of n of the patch
+//     { t: 'seed-fail', to, why }          player -> asker: it can't send the patch
 //   server -> client
 //     { t: 'welcome', you, players, game } reply to hello
 //     { t: 'wrong-game', game }            reply to hello: the room plays another
@@ -31,16 +39,26 @@
 //     { t: 'mobs', from, k, d }            the enemies at k, from their owner
 //     { t: 'hit', from, k, s, d }          to the owner: another player hit slot s
 //     { t: 'tiles', from, k, b, c, f? }    surroundings another player changed
+//     { t: 'seed-info', game, sending }    reply to seed-get; sending = a player was
+//                                          asked to send the patch (false: nobody can)
+//     { t: 'seed-want', to }               to a sharing player: send the patch to `to`
+//     { t: 'seed-part', i, n, d }          to the asker, from that player
+//     { t: 'seed-fail', why }
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 // What clients from before protocol 4 play (only zelda3, the US game, existed).
 export const VANILLA_GAME = { id: 'lttp-us', label: 'A Link to the Past (US)' };
 const MAX_MOBS_B64 = 4096;
 const MAX_TILE_PAIRS = 0x2000;
 const MAX_PLAYERS = 8;
 const MAX_NAME = 24;
+// A shared seed's patch: an ALttPR seed's is about 90 KB deflated, so this
+// leaves lots of room while keeping whole ROMs (or worse) from being relayed.
+const MAX_SEED_PART_B64 = 64 * 1024;
+const MAX_SEED_PARTS = 24;
+const MAX_SEED_GETS = 20;   // per connection
 
 export class Room {
   constructor(code, saved = null) {
@@ -72,6 +90,7 @@ export class Room {
     if (!p) return [];
     const out = this.moveTo(id, null);
     this.players.delete(id);
+    if (!p.joined) return out;   // only asked about the seed, or was turned away
     return [...out, { to: 'all', msg: { t: 'players', players: this.playerList() } }];
   }
 
@@ -109,7 +128,7 @@ export class Room {
   }
 
   playerList() {
-    return [...this.players].map(([id, p]) => ({ id, name: p.name }));
+    return [...this.players].filter(([, p]) => p.joined).map(([id, p]) => ({ id, name: p.name }));
   }
 
   message(id, msg) {
@@ -130,6 +149,7 @@ export class Room {
         }
         const p = this.players.get(id);
         p.joined = true;
+        p.share = msg.share === true;
         const name = String(msg.name ?? '').trim().slice(0, MAX_NAME);
         if (name) p.name = name;
         return [
@@ -185,6 +205,35 @@ export class Room {
             !c.every((v, i) => int(v, 0, i % 2 ? 0xff : 0x1ffff))) return err('bad tiles');
         return this.playersAt(k).filter((to) => to !== id)
           .map((to) => ({ to, msg: { t: 'tiles', from: id, k, b, c, ...(msg.f ? { f: 1 } : {}) } }));
+      }
+      case 'seed-get': {
+        const p = this.players.get(id);
+        if (p.joined || (p.gets = (p.gets ?? 0) + 1) > MAX_SEED_GETS) return [];
+        const have = Array.isArray(msg.have) ? msg.have : [];
+        // The US game runs on zelda3 from the player's own ROM; nothing to send.
+        if (!this.game || this.game.id === VANILLA_GAME.id || have.includes(this.game.id)) {
+          return [{ to: id, msg: { t: 'seed-info', game: this.game, sending: false } }];
+        }
+        // Ask the sharer who has been here longest, a different one each time
+        // this page asks again in case one of them couldn't send it.
+        const sharers = [...this.players].filter(([, q]) => q.joined && q.share).map(([pid]) => pid);
+        const from = sharers.length ? sharers[(p.gets - 1) % sharers.length] : null;
+        return [
+          { to: id, msg: { t: 'seed-info', game: this.game, sending: from !== null } },
+          ...(from !== null ? [{ to: from, msg: { t: 'seed-want', to: id } }] : []),
+        ];
+      }
+      case 'seed-part': case 'seed-fail': {
+        const p = this.players.get(id), to = this.players.get(msg.to);
+        // Only a player in the room, to a page that's still just asking.
+        if (!p.joined || !p.share || !to || to.joined || !to.gets) return [];
+        if (msg.t === 'seed-fail') {
+          const why = typeof msg.why === 'string' ? msg.why.replace(/[^\x20-\x7e]/g, '').slice(0, 200) : '';
+          return [{ to: msg.to, msg: { t: 'seed-fail', why } }];
+        }
+        if (!int(msg.n, 1, MAX_SEED_PARTS) || !int(msg.i, 0, msg.n - 1) || typeof msg.d !== 'string' ||
+            msg.d.length > MAX_SEED_PART_B64 || !/^[A-Za-z0-9+/]*=*$/.test(msg.d)) return err('bad seed part');
+        return [{ to: msg.to, msg: { t: 'seed-part', i: msg.i, n: msg.n, d: msg.d } }];
       }
       case 'hit': {
         const k = areaKey(msg.k);

@@ -15,6 +15,7 @@ import { FIELDS, FIELD_BY_KEY, applyOp, diff, snapshot, describeOp } from './fie
 import { PresenceSender, RemotePlayers } from './presence.js';
 import { MobSync } from './mobs.js';
 import { RoomTiles } from './tiles.js';
+import { patchMessages } from './seed-share.js';
 
 const TICK_MS = 100;
 const PRESENCE_MS = 66;   // position updates: 15 a second, only when something moved
@@ -22,9 +23,10 @@ const same = (a, b) => (Array.isArray(a) ? a.every((x, i) => x === b[i]) : a ===
 
 export class SyncClient {
   // game: { id, label } of the ROM being played (rom-info.js); the room only
-  // lets in players of the same game.
-  constructor({ url, room, name, backend, game = null, onStatus = () => {}, onNotice = () => {}, WebSocketImpl = globalThis.WebSocket }) {
-    Object.assign(this, { url, room, name, backend, game, onStatus, onNotice, WebSocketImpl });
+  // lets in players of the same game. seedPatch: optional async () => the
+  // seed as a deflated patch (seed-share.js), for friends who join without it.
+  constructor({ url, room, name, backend, game = null, seedPatch = null, onStatus = () => {}, onNotice = () => {}, WebSocketImpl = globalThis.WebSocket }) {
+    Object.assign(this, { url, room, name, backend, game, seedPatch, onStatus, onNotice, WebSocketImpl });
     this.roomGame = null;    // what the room plays, from the server
     this.ws = null;
     this.you = null;
@@ -75,7 +77,7 @@ export class SyncClient {
     ws.onopen = () => {
       opened = true;
       this.retryMs = 1000;
-      this.send({ t: 'hello', name: this.name, ...(this.game && { game: this.game }) });
+      this.send({ t: 'hello', name: this.name, ...(this.game && { game: this.game }), ...(this.seedPatch && { share: true }) });
     };
     ws.onmessage = (e) => {
       let msg;
@@ -116,7 +118,6 @@ export class SyncClient {
         this.presence?.reset();
         this.mobs.reset();
         this.tiles.reset();
-      this.tiles.reset();
         this.status('connected');
         break;
       case 'players':
@@ -147,6 +148,9 @@ export class SyncClient {
       case 'ops':
         this.onRemoteOps(msg.from, msg.ops);
         break;
+      case 'seed-want':
+        this.sendSeed(msg.to);
+        break;
       case 'wrong-game':
         // Another seed: stay out of the room rather than mixing two games' progress.
         this.roomGame = msg.game;
@@ -157,6 +161,17 @@ export class SyncClient {
       case 'error':
         console.warn('[sync] server:', msg.message);
         break;
+    }
+  }
+
+  // A friend opened the room without this seed: send it as a patch.
+  async sendSeed(to) {
+    try {
+      const patch = await this.seedPatch();
+      for (const m of patchMessages(patch, to)) this.send(m);
+    } catch (e) {
+      console.warn('[sync] could not share the seed:', e);
+      this.send({ t: 'seed-fail', to, why: e.message || String(e) });
     }
   }
 
