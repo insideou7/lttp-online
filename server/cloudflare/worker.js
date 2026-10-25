@@ -45,6 +45,8 @@ export class SyncRoom {
     ws.addEventListener('message', (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch { ws.close(1003); return; }
+      // Positions (most messages) never change the saved progress.
+      if (msg?.t === 'pos') { this.deliver(this.room.message(id, msg)); return; }
       const before = JSON.stringify(this.room.state);
       this.deliver(this.room.message(id, msg));
       const after = JSON.stringify(this.room.state);

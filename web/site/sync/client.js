@@ -8,9 +8,14 @@
 //   backend.inGame()    true while a save file is loaded and being played
 //   backend.refresh(kinds)  optional: redraw after a remote change, kinds is a
 //                       Set of 'hud' | 'sword' | 'shield' | 'armor'
+//   backend.video       optional: video memory, to show this player's Link to
+//                       the others (see presence.js). Without it the player
+//                       still sees the others.
 import { FIELDS, FIELD_BY_KEY, applyOp, diff, snapshot, describeOp } from './fields.js';
+import { PresenceSender, RemotePlayers } from './presence.js';
 
 const TICK_MS = 100;
+const PRESENCE_MS = 66;   // position updates: 15 a second, only when something moved
 const same = (a, b) => (Array.isArray(a) ? a.every((x, i) => x === b[i]) : a === b);
 
 export class SyncClient {
@@ -26,16 +31,21 @@ export class SyncClient {
     this.closed = false;
     this.pendingRefresh = new Set();
     this.timer = null;
+    this.serverVersion = 0;
+    this.presence = backend.video ? new PresenceSender(backend) : null;
+    this.remote = new RemotePlayers();   // other players' Links, for drawing
   }
 
   start() {
     this.connect();
     this.timer = setInterval(() => this.tick(), TICK_MS);
+    this.presenceTimer = setInterval(() => this.presenceTick(), PRESENCE_MS);
   }
 
   stop() {
     this.closed = true;
     clearInterval(this.timer);
+    clearInterval(this.presenceTimer);
     this.ws?.close();
   }
 
@@ -70,6 +80,7 @@ export class SyncClient {
       this.ws = null;
       if (this.known) this.offline = this.known;
       this.known = null;
+      this.remote.clear();
       this.syncSent = false;
       if (this.closed) return;
       this.status(opened ? 'reconnecting' : 'unreachable');
@@ -91,11 +102,19 @@ export class SyncClient {
       case 'welcome':
         this.you = msg.you;
         this.players = msg.players;
+        this.serverVersion = msg.v ?? 1;
+        this.presence?.reset();
         this.status('connected');
         break;
       case 'players':
         this.players = msg.players;
+        // A newcomer needs our position and pose images again.
+        this.presence?.reset();
+        this.remote.retain(msg.players.map((p) => p.id));
         this.status('connected');
+        break;
+      case 'pos':
+        this.remote.onPos(msg.from, msg.p);
         break;
       case 'synced':
         this.onSynced(msg.state);
@@ -166,6 +185,14 @@ export class SyncClient {
       const what = describeOp(op, f.kind === 'max' || f.kind === 'set' ? op.v : null);
       if (what) this.onNotice({ from, name: this.playerName(from), what, op });
     }
+  }
+
+  // Where this player's Link is and what he looks like (servers from before
+  // protocol 2 don't relay it).
+  presenceTick() {
+    if (!this.presence || this.serverVersion < 2 || !this.ws || this.ws.readyState !== 1) return;
+    const p = this.presence.next();
+    if (p !== undefined) this.send({ t: 'pos', p });
   }
 
   tick() {

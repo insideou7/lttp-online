@@ -16,8 +16,21 @@ export function zelda3Backend(game) {
     get: (addr) => game.HEAPU8[base() + addr],
     set: (addr, v) => { game.HEAPU8[base() + addr] = v; },
   };
+  // The PPU's video memory, to picture this player's Link for the others.
+  const u16 = (ptr, i) => game.HEAPU8[ptr + i * 2] | (game.HEAPU8[ptr + i * 2 + 1] << 8);
+  const OBJ_SIZES = [[8, 16], [8, 32], [8, 64], [16, 32], [16, 64], [32, 64], [16, 32], [16, 32]];
+  const video = {
+    vram: (word) => u16(game._web_vram(), word),
+    cgram: (i) => u16(game._web_cgram(), i),
+    objBase: (table) => {
+      const info = game._web_obj_info() >>> 0;
+      return table ? info >>> 16 : info & 0xffff;
+    },
+    objSizes: () => OBJ_SIZES[game._web_obj_size() & 7],
+  };
   return {
     ram,
+    video: game._web_vram ? video : undefined,
     inGame: () => IN_GAME_MODULES.has(ram.get(0x10)),
     // Redraw only in plain dungeon/overworld play (no menu, dialog or
     // transition running), so it never interrupts the game's own drawing.
