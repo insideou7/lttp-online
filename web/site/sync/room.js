@@ -14,7 +14,7 @@
 //     { t: 'synced', state, seeded }       reply to sync: the room's progress
 //     { t: 'ops', from, ops }              another player's unlocks
 //     { t: 'error', message }
-import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue } from './fields.js';
+import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
 export const PROTOCOL_VERSION = 1;
 const MAX_PLAYERS = 8;
@@ -95,9 +95,9 @@ function cleanState(s) {
   const out = {};
   for (const f of FIELDS) {
     const v = s[f.key];
-    if (f.kind === 'bits') {
+    if (isArrayKind(f)) {
       if (!Array.isArray(v) || v.length !== f.len) return null;
-      out[f.key] = v.map((b) => (Number.isInteger(b) ? b & 0xff : 0));
+      out[f.key] = v.map((b) => (Number.isInteger(b) ? Math.max(0, Math.min(f.max ?? 255, b)) : 0));
     } else {
       out[f.key] = Number.isInteger(v) ? Math.max(0, Math.min(f.max ?? 255, v)) : emptyValue(f);
     }

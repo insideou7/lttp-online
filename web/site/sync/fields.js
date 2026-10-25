@@ -5,7 +5,7 @@
 // randomizer ROMs, which keep vanilla's item RAM layout) read the same bytes.
 //
 // Anything not listed here stays per player: rupees, bombs, arrows, current
-// health and magic, small keys, bottle contents, position, followers.
+// health and magic, bottle contents, position, followers.
 //
 // Merge kinds:
 //   bits  bytes whose bits only ever get set (chests opened, pendants...).
@@ -15,11 +15,22 @@
 //         upgrades). Ops carry the increase, not the total.
 //   set   last writer wins, for items the game can also take away
 //         (the smiths borrow your sword, a Like Like eats your shield).
+//   counts  per-slot counts that go up and down (small keys per dungeon).
+//         Ops carry the change, so a key one player picks up is added for
+//         everyone and a key one player uses is spent for everyone.
 
 const u8 = (addr) => ({
   read: (ram) => ram.get(addr),
   write: (ram, v) => ram.set(addr, v),
 });
+
+// Index into the per-dungeon key counts of the dungeon Link is in, or -1.
+// $7E040C is the dungeon number times two, 0xFF outside dungeons.
+function curDungeon(ram) {
+  const x2 = ram.get(0x40C);
+  if (x2 === 0xFF) return -1;
+  return (x2 === 2 ? 0 : x2) >> 1;
+}
 
 const item = (key, addr, label, extra = {}) => ({ key, kind: 'max', ...u8(addr), label, refresh: 'hud', ...extra });
 
@@ -91,6 +102,33 @@ export const FIELDS = [
     },
   },
 
+  // Small keys, one count per dungeon at $7EF37C + index (Hyrule Castle and
+  // the sewers share index 0). Inside a dungeon the game works on a copy at
+  // $7EF36F and saves it back when leaving; 0xFF there means "no dungeon".
+  {
+    key: 'keys', kind: 'counts', len: 14, max: 99, label: 'Small Key', refresh: 'hud',
+    read: (ram) => {
+      const a = [];
+      for (let i = 0; i < 14; i++) a.push(ram.get(0xF37C + i));
+      // The live copy, when loaded, is the current count for its dungeon. The
+      // game saves it back before unloading it (0xFF), so the saved array is
+      // right whenever the copy isn't loaded.
+      const d = curDungeon(ram), live = ram.get(0xF36F);
+      if (d >= 0 && live !== 0xFF) a[d] = live;
+      return a;
+    },
+    write: (ram, a) => {
+      for (let i = 0; i < 14; i++) ram.set(0xF37C + i, a[i]);
+      const d = curDungeon(ram);
+      if (d >= 0 && ram.get(0xF36F) !== 0xFF) ram.set(0xF36F, a[d]);
+    },
+    addAt: (ram, i, delta) => {
+      const clamp = (v) => Math.max(0, Math.min(99, v + delta));
+      ram.set(0xF37C + i, clamp(ram.get(0xF37C + i)));
+      if (curDungeon(ram) === i && ram.get(0xF36F) !== 0xFF) ram.set(0xF36F, clamp(ram.get(0xF36F)));
+    },
+  },
+
   { key: 'compass', kind: 'bits', addr: 0xF364, len: 2 },
   { key: 'bigKey', kind: 'bits', addr: 0xF366, len: 2 },
   { key: 'dungeonMap', kind: 'bits', addr: 0xF368, len: 2 },
@@ -132,8 +170,10 @@ for (const f of FIELDS) {
   }
 }
 
+export const isArrayKind = (f) => f.kind === 'bits' || f.kind === 'counts';
+
 export function emptyValue(f) {
-  return f.kind === 'bits' ? new Array(f.len).fill(0) : 0;
+  return isArrayKind(f) ? new Array(f.len).fill(0) : 0;
 }
 
 // --- Ops -------------------------------------------------------------------
@@ -141,6 +181,7 @@ export function emptyValue(f) {
 //   { k, bits: { index: mask } }   bits newly set
 //   { k, v }                       new value (max, set)
 //   { k, d }                       increase (sum)
+//   { k, d: { index: change } }    change, may be negative (counts)
 
 // Apply an op to a field value, returning the new value (does not mutate).
 export function applyOp(f, value, op) {
@@ -150,6 +191,14 @@ export function applyOp(f, value, op) {
       for (const [i, m] of Object.entries(op.bits)) {
         const idx = Number(i);
         if (idx >= 0 && idx < f.len) out[idx] = (out[idx] | m) & 0xff;
+      }
+      return out;
+    }
+    case 'counts': {
+      const out = value.slice();
+      for (const [i, d] of Object.entries(op.d)) {
+        const idx = Number(i);
+        if (idx >= 0 && idx < f.len) out[idx] = Math.max(0, Math.min(f.max, out[idx] + d));
       }
       return out;
     }
@@ -169,6 +218,9 @@ export function validOp(op) {
     case 'bits':
       return op.bits && typeof op.bits === 'object' &&
         Object.entries(op.bits).every(([i, m]) => int(Number(i)) && Number(i) >= 0 && Number(i) < f.len && int(m) && m > 0 && m < 256);
+    case 'counts':
+      return op.d && typeof op.d === 'object' &&
+        Object.entries(op.d).every(([i, d]) => int(Number(i)) && Number(i) >= 0 && Number(i) < f.len && int(d) && d !== 0 && Math.abs(d) <= f.max);
     case 'max': case 'set': return int(op.v) && op.v >= 0 && op.v < 256;
     case 'sum': return int(op.d) && op.d > 0 && op.d <= (f.max ?? 255);
   }
@@ -188,6 +240,15 @@ export function diff(f, from, to) {
       }
       return any ? [{ k: f.key, bits }] : [];
     }
+    case 'counts': {
+      if (!to) return [];  // not readable right now
+      const d = {};
+      let any = false;
+      for (let i = 0; i < f.len; i++) {
+        if (to[i] !== from[i]) { d[i] = to[i] - from[i]; any = true; }
+      }
+      return any ? [{ k: f.key, d }] : [];
+    }
     case 'max': return to > from ? [{ k: f.key, v: to }] : [];
     case 'set': return to !== from ? [{ k: f.key, v: to }] : [];
     case 'sum': return to > from ? [{ k: f.key, d: to - from }] : [];
@@ -195,16 +256,28 @@ export function diff(f, from, to) {
   return [];
 }
 
+// The shared part of the save, or null if some of it can't be read right now
+// (mid-transition); try again next tick.
 export function snapshot(ram) {
-  return Object.fromEntries(FIELDS.map((f) => [f.key, f.read(ram)]));
+  const out = {};
+  for (const f of FIELDS) {
+    const v = f.read(ram);
+    if (v === null) return null;
+    out[f.key] = v;
+  }
+  return out;
 }
 
-// A readable name for what an op gave, for "Sam found the Hookshot" notices.
-// Returns null for ops that aren't worth announcing (map flags etc.).
+// What an op did, for notices like "Sam got Hookshot". Returns null for ops
+// that aren't worth announcing (map flags etc.).
 export function describeOp(op, value) {
   const f = FIELD_BY_KEY[op.k];
   if (!f || !f.label) return null;
-  if (Array.isArray(f.label)) return f.label[value] || null;
-  if (f.key === 'heartQuarters') return op.d >= 4 ? 'a Heart Container' : 'a Piece of Heart';
-  return f.label;
+  if (f.kind === 'counts') {
+    const n = Object.values(op.d).reduce((a, b) => a + b, 0);
+    return n > 0 ? 'got a Small Key' : n < 0 ? 'used a Small Key' : null;
+  }
+  if (f.key === 'heartQuarters') return op.d >= 4 ? 'got a Heart Container' : 'got a Piece of Heart';
+  const name = Array.isArray(f.label) ? f.label[value] : f.label;
+  return name ? 'got ' + name : null;
 }
