@@ -127,3 +127,24 @@ test('two players fight the same enemies through the server', async () => {
   a.stop(); b.stop();
   server.close();
 });
+
+test('enemies out of the owner\'s sight stay in our game', () => {
+  const owner = fakeGame(), us = fakeGame();
+  owner.spawn(0, 0x41, 4, 0x20);                 // in front of the owner
+  us.spawn(0, 0x45, 4, 0x80);                    // a guard next to us...
+  us.mem[0xD30] = 0x02;                          // ...at x 0x280
+  us.spawn(5, 0x46, 4, 0x90); us.mem[0xD30 + 5] = 0x02;
+  us.spawn(6, 0x47, 4, 0x60);                    // x 0x60: the owner sees that spot
+  us.mem[0xE3] = 0x02;                           // our camera at x 0x200
+  const m = new MobSync(us, () => {});
+  const send = (camX) => m.onMobs({ k: 'u12', d: toBase64(Uint8Array.from([...readSnapshot(owner.ram), camX & 0xff, camX >> 8, 0, 0])) });
+  send(0);
+  assert.equal(us.mem[TYPE], 0x41);              // the owner's slot 0 wins...
+  const types = [...us.mem.slice(TYPE, TYPE + 16)];
+  assert.ok(types.includes(0x45));               // ...and our guard moved to a free slot
+  assert.equal(us.mem[TYPE + 5], 0x46);          // kept where it was
+  assert.equal(us.mem[STATE + 6], 0);            // the owner's copy says it's gone
+  // The owner walks over (camera at x 0x200): its copy decides again.
+  send(0x200);
+  assert.equal(us.mem[STATE + 5], 0);
+});

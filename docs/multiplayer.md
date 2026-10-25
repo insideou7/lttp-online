@@ -153,8 +153,9 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   Randomizer-only counters (keysanity key totals, triforce pieces, collected-item count) stay per
   player. If a randomizer rewrote one of the game's redraw routines, another player's unlock still
   arrives but shows on your HUD or Link only after the next room or area change.
-- Shared enemies: an enemy right at the edge of your screen can flicker when the room's host is
-  some distance away, because your game stops running enemies it thinks are off screen. Bosses
+- Shared enemies: the host's game only runs enemies near its own screen. Enemies you can see
+  but the host can't (the host's snapshot carries its camera) stay in your game, run by your game
+  alone, until the host comes close; an enemy right at that line can still flicker. Bosses
   keep extra state outside the sprite tables and may act oddly for non-hosts. Items an enemy
   drops are the host's roll.
 - Pushed blocks go through the same tile changes but haven't been tried with two players.
