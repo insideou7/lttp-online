@@ -11,6 +11,8 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.listing.ProgramContext;
+import java.math.BigInteger;
 
 public class LoRomMap extends GhidraScript {
   @Override
@@ -37,8 +39,18 @@ public class LoRomMap extends GhidraScript {
       if (target < 0x8000) continue;
       Address t = toAddr(target);
       createLabel(t, "Vector_" + v[0], true, SourceType.USER_DEFINED);
+      // RESET runs in emulation mode (8-bit A/X/Y). The native NMI/IRQ handlers
+      // start with 8-bit A/X/Y as a guess; their first REP/SEP corrects it.
+      setFlag(t, "ctx_EF", v[0].equals("RESET") ? 1 : 0);
+      setFlag(t, "ctx_MF", 1);
+      setFlag(t, "ctx_XF", 1);
       new DisassembleCommand(t, null, true).applyTo(currentProgram, monitor);
       println(v[0] + " -> " + t);
     }
+  }
+
+  private void setFlag(Address a, String name, int value) throws Exception {
+    ProgramContext ctx = currentProgram.getProgramContext();
+    ctx.setValue(ctx.getRegister(name), a, a, BigInteger.valueOf(value));
   }
 }
