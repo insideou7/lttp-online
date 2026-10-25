@@ -1,0 +1,210 @@
+// Browser side of multiplayer: watches this player's save area, sends new
+// unlocks to the room and writes other players' unlocks into the game.
+//
+// It talks to the game only through a backend object, so the same client
+// works for zelda3 and a future SNES emulator core:
+//   backend.ram.get(addr) / backend.ram.set(addr, byte)
+//                       work RAM, addr is an offset from $7E0000
+//   backend.inGame()    true while a save file is loaded and being played
+//   backend.refresh(kinds)  optional: redraw after a remote change, kinds is a
+//                       Set of 'hud' | 'sword' | 'shield' | 'armor'
+import { FIELDS, FIELD_BY_KEY, applyOp, diff, snapshot, describeOp } from './fields.js';
+
+const TICK_MS = 100;
+const same = (a, b) => (Array.isArray(a) ? a.every((x, i) => x === b[i]) : a === b);
+
+export class SyncClient {
+  constructor({ url, room, name, backend, onStatus = () => {}, onNotice = () => {}, WebSocketImpl = globalThis.WebSocket }) {
+    Object.assign(this, { url, room, name, backend, onStatus, onNotice, WebSocketImpl });
+    this.ws = null;
+    this.you = null;
+    this.players = [];
+    this.known = null;       // room state as far as this client knows; null = not synced
+    this.offline = null;     // `known` from before a disconnect, to recover gains made offline
+    this.syncSent = false;
+    this.retryMs = 1000;
+    this.closed = false;
+    this.pendingRefresh = new Set();
+    this.timer = null;
+  }
+
+  start() {
+    this.connect();
+    this.timer = setInterval(() => this.tick(), TICK_MS);
+  }
+
+  stop() {
+    this.closed = true;
+    clearInterval(this.timer);
+    this.ws?.close();
+  }
+
+  status(state, detail = '') { this.onStatus({ state, detail, players: this.players, you: this.you }); }
+
+  connect() {
+    if (this.closed) return;
+    const u = new URL(this.url);
+    u.searchParams.set('room', this.room);
+    let ws;
+    try {
+      ws = new this.WebSocketImpl(u.toString());
+    } catch (e) {
+      this.status('error', e.message);
+      return;
+    }
+    this.ws = ws;
+    this.status('connecting');
+    let opened = false;
+    ws.onopen = () => {
+      opened = true;
+      this.retryMs = 1000;
+      this.send({ t: 'hello', name: this.name });
+    };
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      this.onMessage(msg);
+    };
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
+      if (this.known) this.offline = this.known;
+      this.known = null;
+      this.syncSent = false;
+      if (this.closed) return;
+      this.status(opened ? 'reconnecting' : 'unreachable');
+      setTimeout(() => this.connect(), this.retryMs);
+      this.retryMs = Math.min(this.retryMs * 2, 30000);
+    };
+  }
+
+  send(msg) {
+    if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(msg));
+  }
+
+  playerName(id) {
+    return this.players.find((p) => p.id === id)?.name ?? 'Someone';
+  }
+
+  onMessage(msg) {
+    switch (msg.t) {
+      case 'welcome':
+        this.you = msg.you;
+        this.players = msg.players;
+        this.status('connected');
+        break;
+      case 'players':
+        this.players = msg.players;
+        this.status('connected');
+        break;
+      case 'synced':
+        this.onSynced(msg.state);
+        break;
+      case 'ops':
+        this.onRemoteOps(msg.from, msg.ops);
+        break;
+      case 'error':
+        console.warn('[sync] server:', msg.message);
+        break;
+    }
+  }
+
+  // The room's progress arrived: merge it with this player's save.
+  onSynced(state) {
+    this.syncSent = false;
+    if (!this.backend.inGame()) return;  // left the game meanwhile; sync again later
+    const ram = this.backend.ram;
+    for (const f of FIELDS) {
+      const local = f.read(ram);
+      const room = state[f.key];
+      const before = this.offline?.[f.key];
+      let want;
+      switch (f.kind) {
+        case 'bits': want = local.map((b, i) => b | room[i]); break;
+        case 'max': want = Math.max(local, room); break;
+        // Keep a value this player changed while disconnected, else take the room's.
+        case 'set': want = before !== undefined && local !== before ? local : room; break;
+        // Room total plus whatever this player gained while disconnected.
+        case 'sum': want = Math.min(f.max ?? 255, room + (before !== undefined ? Math.max(0, local - before) : 0)); break;
+      }
+      if (!same(want, local)) {
+        f.write(ram, want);
+        if (f.refresh) this.pendingRefresh.add(f.refresh);
+      }
+    }
+    this.known = structuredClone(state);
+    this.offline = null;
+    // The next tick sends whatever this player has that the room didn't.
+    this.tick();
+  }
+
+  onRemoteOps(from, ops) {
+    if (!this.known || !this.backend.inGame()) return;  // the next sync picks them up
+    const ram = this.backend.ram;
+    for (const op of ops) {
+      const f = FIELD_BY_KEY[op.k];
+      if (!f) continue;
+      this.known[f.key] = applyOp(f, this.known[f.key], op);
+      const cur = f.read(ram);
+      const next = f.kind === 'set' ? op.v : applyOp(f, cur, op);
+      if (!same(next, cur)) {
+        f.write(ram, next);
+        if (f.refresh) this.pendingRefresh.add(f.refresh);
+      }
+      const what = describeOp(op, f.kind === 'max' || f.kind === 'set' ? op.v : null);
+      if (what) this.onNotice({ from, name: this.playerName(from), what, op });
+    }
+  }
+
+  tick() {
+    if (!this.backend.inGame()) {
+      // Back at the file select screen: the next file may be a different save.
+      this.known = null;
+      this.offline = null;
+      return;
+    }
+    if (!this.ws || this.ws.readyState !== 1) return;
+    if (!this.known) {
+      if (!this.syncSent) {
+        this.send({ t: 'sync', state: snapshot(this.backend.ram) });
+        this.syncSent = true;
+      }
+      return;
+    }
+    const ram = this.backend.ram;
+    const ops = [];
+    for (const f of FIELDS) {
+      const local = f.read(ram);
+      const known = this.known[f.key];
+      for (const op of diff(f, known, local)) {
+        ops.push(op);
+        this.known[f.key] = applyOp(f, known, op);
+      }
+      // Put back shared unlocks the game overwrote, e.g. a dungeon room's
+      // flags saved from the copy the game loaded before another player
+      // opened a chest there.
+      if (f.kind === 'bits' || f.kind === 'max') {
+        const want = applyOp(f, local, f.kind === 'bits'
+          ? { bits: Object.fromEntries(this.known[f.key].map((m, i) => [i, m])) }
+          : { v: this.known[f.key] });
+        if (!same(want, local)) {
+          f.write(ram, want);
+          if (f.refresh) this.pendingRefresh.add(f.refresh);
+        }
+      }
+    }
+    if (ops.length) this.send({ t: 'ops', ops });
+    if (this.pendingRefresh.size && this.backend.refresh) {
+      if (this.backend.refresh(this.pendingRefresh) !== false) this.pendingRefresh.clear();
+    }
+  }
+}
+
+// Where the sync server is: ?server=..., else the deploy's build.json "sync"
+// field, else /sync on the page's own host.
+export function resolveSyncUrl(buildInfo, location = globalThis.location) {
+  const param = new URL(location.href).searchParams.get('server');
+  if (param) return param;
+  if (buildInfo?.sync) return new URL(buildInfo.sync, location.href).toString().replace(/^http/, 'ws');
+  return new URL('sync', location.href).toString().replace(/^http/, 'ws');
+}

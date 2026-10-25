@@ -6,6 +6,7 @@
 ```bash
 EMSDK=/path/to/emsdk web/build.sh               # about 1 minute, output in web/dist/
 python3 -m http.server -d web/dist 8080         # then open http://localhost:8080
+node server/index.js --static web/dist          # same, plus the multiplayer server
 ```
 
 `web/dist/` is a static site (about 17 MB). Any static host works; it needs no special headers.
@@ -53,8 +54,9 @@ zelda3 is pinned to a commit in `build.sh` and patched with `web/patches/zelda3-
 - `src/zelda_rtl.c`: calls `Module.onSavesChanged` after writing SRAM or a save state.
 
 `web/src/web_api.c` adds exports for the page: `web_ram()` (128 KiB WRAM), `web_ram_size()`,
-`web_sram()` (8 KiB SRAM). From the console, `lttp.HEAPU8[lttp._web_ram() + 0x10]` is the current
-game module, for example. These are the hooks for multiplayer sync (below).
+`web_sram()` (8 KiB SRAM), and `web_refresh()`, which redraws the HUD and gear after multiplayer
+sync changes them. From the console, `lttp.HEAPU8[lttp._web_ram() + 0x10]` is the current game
+module, for example.
 
 The desktop OpenGL output is not built; the web config forces `OutputMethod = SDL`. The page's
 `zelda3.ini` is upstream's with `WindowScale = 3`, `AudioSamples = 1024` and autosave off.
@@ -71,9 +73,7 @@ uses CRLF line endings). Assets are cached per zelda3 commit, so players re-extr
 
 ## Next steps
 
-- **Multiplayer.** Each player runs their own copy of the game; a server syncs only the shared
-  unlock bytes of the save area in WRAM ($7EF340+ items, heart containers, armor, swords, progress
-  flags). Rupees, bombs, arrows and current health stay per player.
+- **Multiplayer** is in: see [multiplayer.md](multiplayer.md).
 - **Randomizer ROMs** (e.g. ALttPR) patch the game's code, so zelda3 can't run them. The plan is a
   second backend: an SNES emulator core in WebAssembly running the player's ROM. Randomizers keep
   vanilla's RAM layout for items, so the same sync works on both backends.

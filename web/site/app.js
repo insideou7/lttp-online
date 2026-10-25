@@ -1,4 +1,8 @@
 // LTTP Online page logic: get assets from the player's ROM (once), then run the game.
+import { SyncClient, resolveSyncUrl } from './sync/client.js';
+import { zelda3Backend } from './sync/zelda3-backend.js';
+import { isRoomCode, newRoomCode } from './sync/room.js';
+
 const US_ROM_SHA1 = '6d4f10a8b10e10dbe624cb23cf03b88bb8252973';
 const GAME_DIR = '/zelda3';
 
@@ -34,11 +38,14 @@ const kvSet = (k, v) => kv('readwrite', (s) => s.put(v, k));
 const kvDel = (k) => kv('readwrite', (s) => s.delete(k));
 
 // Assets are tied to the zelda3 version the game was built from.
+// build.json may also name the sync server ("sync"), for hosts where it isn't
+// on the page's own origin.
 let assetsKey = 'assets';
+let buildInfo = {};
 async function loadBuildInfo() {
   try {
-    const info = await (await fetch('build.json')).json();
-    assetsKey = 'assets-' + info.zelda3;
+    buildInfo = await (await fetch('build.json')).json();
+    assetsKey = 'assets-' + buildInfo.zelda3;
   } catch { /* keep default key */ }
 }
 
@@ -151,13 +158,94 @@ async function startGame() {
   });
 
   $('setup').hidden = true;
+  $('multiplayer').hidden = true;
   $('game').hidden = false;
   game.callMain([]);
   canvas.focus();
   window.lttp = game;  // handy for debugging from the console
+  startSync(game);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') persistSaves();
   });
+}
+
+// --- Multiplayer -------------------------------------------------------------
+// A room is just a code in the page URL (?room=CODE): the invite link is the
+// page link with the code, and the first player in a room seeds its progress.
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+
+let roomCode = null;
+function setRoom(code) {
+  roomCode = code;
+  const url = new URL(location.href);
+  if (code) url.searchParams.set('room', code); else url.searchParams.delete('room');
+  history.replaceState(null, '', url);
+  $('mp-solo').hidden = !!code;
+  $('mp-room').hidden = !code;
+  $('mp-leave').hidden = !code;
+  if (code) {
+    $('mp-room-code').textContent = code;
+    $('mp-link').value = url.toString();
+  }
+}
+
+function showNotice(html) {
+  const el = document.createElement('div');
+  el.className = 'notice';
+  el.innerHTML = html;
+  $('notices').append(el);
+  setTimeout(() => { el.style.opacity = '0'; }, 3500);
+  setTimeout(() => el.remove(), 4000);
+}
+const escapeHtml = (t) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+function startSync(game) {
+  if (!roomCode) return;
+  const statusEl = $('mp-status');
+  const label = { connecting: 'connecting…', reconnecting: 'reconnecting…', connected: '',
+    unreachable: "can't reach the sync server, playing solo for now", error: 'sync error' };
+  const sync = new SyncClient({
+    url: resolveSyncUrl(buildInfo),
+    room: roomCode,
+    name: $('mp-name').value.trim() || 'Link',
+    backend: zelda3Backend(game),
+    onStatus: ({ state, detail, players, you }) => {
+      let text = `Room ${roomCode}: ` + (label[state] ?? state);
+      if (state === 'connected') {
+        text += players.map((p) => (p.id === you ? p.name + ' (you)' : p.name)).join(', ');
+      }
+      statusEl.textContent = text + (detail ? ` (${detail})` : '');
+      statusEl.classList.toggle('error', state === 'unreachable' || state === 'error');
+    },
+    onNotice: ({ name, what }) => showNotice(`<b>${escapeHtml(name)}</b> got ${escapeHtml(what)}`),
+  });
+  sync.start();
+  window.lttpSync = sync;  // for debugging
+}
+
+$('mp-name').value = lsGet('lttp-name') || '';
+$('mp-name').addEventListener('change', () => lsSet('lttp-name', $('mp-name').value.trim()));
+$('mp-create').addEventListener('click', () => setRoom(newRoomCode()));
+const joinTyped = () => {
+  const code = $('mp-code').value.trim().toUpperCase();
+  if (isRoomCode(code)) setRoom(code);
+  else setStatus('Room codes are 4 to 12 letters and digits, like ' + newRoomCode() + '.', true);
+};
+$('mp-join').addEventListener('click', joinTyped);
+$('mp-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinTyped(); });
+$('mp-copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('mp-link').value);
+    $('mp-copy').textContent = 'Copied';
+  } catch {
+    $('mp-link').select();
+  }
+});
+$('mp-leave').addEventListener('click', () => setRoom(null));
+{
+  const code = (new URL(location.href).searchParams.get('room') || '').toUpperCase();
+  setRoom(isRoomCode(code) ? code : null);
 }
 
 // --- Wire up ----------------------------------------------------------------
