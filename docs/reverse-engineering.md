@@ -29,7 +29,8 @@ ARM/ARM64, NMOS 6502 and 68000; 65816 is explicitly rejected
 tools/ghidra/import-rom.sh roms/zelda3.sfc      # maps LoROM banks to $BB:8000-$BB:FFFF
 ```
 
-`LoRomMap.java` labels and disassembles from the NMI/IRQ/RESET vectors. The module's
+`LoRomMap.java` labels and disassembles from the NMI/IRQ/RESET vectors, starting RESET
+in emulation mode (8-bit registers) so the boot code decodes the same as jpdasm. The module's
 disassembly is good; its decompiler output is weak, and M/X flag tracking after `PLP`/`RTI`
 needs manual "Set Register Values". In practice the jpdasm labels and the zelda3 C
 source answer most "what does this routine do" questions faster than Ghidra does.
@@ -41,6 +42,10 @@ run the original ROM side by side, comparing RAM every frame. For a browser clie
 likely path is compiling it to WebAssembly with Emscripten (SDL2 has an Emscripten port),
 rather than re-deriving the game from the ROM. Its assets still come from the player's own
 ROM (`assets/restool.py --extract-from-rom`), which suits a "bring your own ROM" web client.
+
+To check the C code against the original, copy your ROM into `/opt/re/src/zelda3/`, extract
+assets, and run `./zelda3 zelda3.sfc`: it runs the ROM alongside the C code and reports any
+RAM difference. Headless: `SDL_AUDIODRIVER=dummy xvfb-run ./zelda3 zelda3.sfc`.
 
 ## ROM policy
 
