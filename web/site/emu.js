@@ -1,65 +1,12 @@
 // Runs a ROM on the SNES emulator core (LakeSnes compiled to WebAssembly, see
-// web/src/emu_api.c): picture, sound, keyboard and gamepad, battery saves and
-// save states. Used for randomizer seeds, which zelda3 can't play.
+// web/src/emu_api.c): picture, sound, battery saves and save states. Used for
+// randomizer seeds, which zelda3 can't play. Buttons come from controls.js,
+// shared with the zelda3 backend.
 
 const FPS = 60.0988;                 // NTSC SNES frame rate
 const FRAME_MS = 1000 / FPS;
 const W = 512, H = 448;              // the core doubles pixels; 224 lines start at line 16
 const SRAM_CHECK_FRAMES = 60;
-
-// SNES buttons as LakeSnes bit numbers, in web/keymap.ini's "Controls" order:
-// Up, Down, Left, Right, Select, Start, A, B, X, Y, L, R.
-const CONTROL_BITS = [4, 5, 6, 7, 2, 3, 8, 0, 9, 1, 10, 11];
-
-// SDL key names (as in keymap.ini) to KeyboardEvent.code.
-const SDL_KEY_CODES = {
-  up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
-  return: 'Enter', enter: 'Enter', space: 'Space', tab: 'Tab', backspace: 'Backspace', escape: 'Escape',
-  'right shift': 'ShiftRight', 'left shift': 'ShiftLeft', 'right ctrl': 'ControlRight', 'left ctrl': 'ControlLeft',
-  'right alt': 'AltRight', 'left alt': 'AltLeft', ',': 'Comma', '.': 'Period', '/': 'Slash', ';': 'Semicolon',
-  "'": 'Quote', '[': 'BracketLeft', ']': 'BracketRight', '-': 'Minus', '=': 'Equal', '`': 'Backquote',
-  '\\': 'Backslash',
-};
-function sdlKeyToCode(name) {
-  const k = name.trim().toLowerCase();
-  if (/^[a-z]$/.test(k)) return 'Key' + k.toUpperCase();
-  if (/^[0-9]$/.test(k)) return 'Digit' + k;
-  if (/^f([1-9]|1[0-2])$/.test(k)) return k.toUpperCase();
-  if (k.startsWith('keypad ')) return 'Numpad' + k.slice(7);
-  return SDL_KEY_CODES[k] ?? null;
-}
-
-// KeyboardEvent.code -> button bit, from the [KeyMap] Controls lines of
-// keymap.ini (the same file the zelda3 build uses).
-export function parseKeymap(text) {
-  const map = new Map();
-  let section = '';
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line.startsWith('[')) { section = line.toLowerCase(); continue; }
-    const m = /^controls\s*=\s*(.*)$/i.exec(line);
-    if (section !== '[keymap]' || !m) continue;
-    m[1].split(',').forEach((name, i) => {
-      const code = sdlKeyToCode(name);
-      if (code && i < CONTROL_BITS.length && !map.has(code)) map.set(code, CONTROL_BITS[i]);
-    });
-  }
-  return map;
-}
-
-// Standard gamepad layout: face buttons by position, like a SNES pad.
-const PAD_BITS = [[0, 0], [1, 8], [2, 1], [3, 9], [4, 10], [5, 11], [8, 2], [9, 3], [12, 4], [13, 5], [14, 6], [15, 7]];
-function gamepadButtons() {
-  let b = 0;
-  for (const pad of navigator.getGamepads?.() ?? []) {
-    if (!pad) continue;
-    for (const [i, bit] of PAD_BITS) if (pad.buttons[i]?.pressed) b |= 1 << bit;
-    const [x = 0, y = 0] = pad.axes;
-    if (x < -0.5) b |= 1 << 6; else if (x > 0.5) b |= 1 << 7;
-    if (y < -0.5) b |= 1 << 4; else if (y > 0.5) b |= 1 << 5;
-  }
-  return b;
-}
 
 // Sound: an AudioWorklet playing stereo frames queued from the main thread.
 const WORKLET = `
@@ -110,7 +57,7 @@ async function startAudio() {
 
 // store: { get(key), set(key, value) } (the page's IndexedDB), for saves.
 // gameId keys this game's saves, so each seed has its own save files.
-export async function startEmulator({ createSnes, canvas, rom, keymap, store, gameId, onError = () => {} }) {
+export async function startEmulator({ createSnes, canvas, rom, buttons, store, gameId, onError = () => {} }) {
   const core = await createSnes();
   const romPtr = core._malloc(rom.length);
   core.HEAPU8.set(rom, romPtr);
@@ -139,19 +86,12 @@ export async function startEmulator({ createSnes, canvas, rom, keymap, store, ga
   canvas.width = W;
   canvas.height = H;
   const audio = await startAudio();
-  const keys = parseKeymap(keymap);
-  let held = 0, turbo = false;
+  let turbo = false;
   const frameHooks = new Set();
 
   const editable = (t) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
   async function onKey(e, down) {
     if (editable(e.target)) return;
-    const bit = keys.get(e.code);
-    if (bit !== undefined) {
-      e.preventDefault();
-      if (down) held |= 1 << bit; else held &= ~(1 << bit);
-      return;
-    }
     if (e.code === 'Tab') { e.preventDefault(); turbo = down; return; }
     // Save states like the zelda3 build: Shift+F1-F10 saves, F1-F10 loads.
     const slot = /^F(\d+)$/.exec(e.code)?.[1];
@@ -170,7 +110,7 @@ export async function startEmulator({ createSnes, canvas, rom, keymap, store, ga
   }
   addEventListener('keydown', (e) => onKey(e, true));
   addEventListener('keyup', (e) => onKey(e, false));
-  addEventListener('blur', () => { held = 0; turbo = false; });
+  addEventListener('blur', () => { turbo = false; });
 
   function saveState() {
     const sizePtr = core._malloc(4);
@@ -190,7 +130,7 @@ export async function startEmulator({ createSnes, canvas, rom, keymap, store, ga
   }
 
   function runFrame() {
-    core._emu_frame(held | gamepadButtons());
+    core._emu_frame(buttons());
     for (const cb of frameHooks) {
       try { cb(); } catch (e) { console.warn('frame hook', e); }
     }

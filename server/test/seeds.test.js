@@ -10,7 +10,7 @@ import { Room, VANILLA_GAME } from '../../web/site/sync/room.js';
 import { snapshot } from '../../web/site/sync/fields.js';
 import { identifyRom } from '../../web/site/rom-info.js';
 import { findRoutines } from '../../web/site/sync/snes-backend.js';
-import { parseKeymap } from '../../web/site/emu.js';
+import { parseKeymap } from '../../web/site/controls.js';
 
 const SEED_A = { id: 'seed:VT TEST:0001020304', label: 'seed Bow, Boomerang, Hookshot, Bomb, Mushroom' };
 const SEED_B = { id: 'seed:VT TEST:0506070809', label: 'seed Powder, Rod, Pendant, Bombos, Ether' };
@@ -133,14 +133,14 @@ test('the emulator backend finds the game\'s redraw routines in US and Japanese 
   assert.equal(found.hud, undefined);   // not in this ROM: that redraw is skipped
 });
 
-test('emulator controls come from web/keymap.ini', () => {
-  const keys = parseKeymap(readFileSync(new URL('../../web/keymap.ini', import.meta.url), 'utf8'));
-  // LakeSnes bits: 4 Up, 3 Start, 8 A, 0 B, 2 Select
-  assert.equal(keys.get('KeyW'), 4);
-  assert.equal(keys.get('ArrowUp'), 4);
-  assert.equal(keys.get('KeyG'), 3);
-  assert.equal(keys.get('Enter'), 3);
-  assert.equal(keys.get('KeyJ'), 8);
-  assert.equal(keys.get('KeyM'), 0);
-  assert.equal(keys.get('ShiftRight'), 2);
+test('default controls come from web/keymap.ini', () => {
+  const { main, extra } = parseKeymap(readFileSync(new URL('../../web/keymap.ini', import.meta.url), 'utf8'));
+  assert.deepEqual(main, {
+    up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', select: 'KeyF', start: 'KeyG',
+    a: 'KeyJ', b: 'KeyM', x: 'KeyI', y: 'KeyL', l: 'KeyQ', r: 'KeyE',
+  });
+  // Backup keys from the second Controls line
+  assert.equal(extra.get('ArrowUp'), 'up');
+  assert.equal(extra.get('Enter'), 'start');
+  assert.equal(extra.get('ShiftRight'), 'select');
 });

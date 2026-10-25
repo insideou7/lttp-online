@@ -143,8 +143,10 @@ sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
        sec == "[keymap]" && /^[A-Za-z]+ *=/ { k = $0; sub(/ *=.*/, "", k); if (tolower(k) in mine) next }
        { print }' "$WEB/keymap.ini" - > "$DIST/zelda3.ini"
 printf '\n' >> "$DIST/zelda3.ini"
-cat "$WEB/keymap.ini" >> "$DIST/zelda3.ini"
-cp "$WEB/keymap.ini" "$DIST/keymap.ini"   # the emulator reads the same controls
+# Controls are left empty for zelda3: the page reads keys and gamepads and hands it the buttons
+# (site/controls.js), so players can remap them. The page reads its defaults from keymap.ini.
+awk '/^Controls *=/ { if (!done) print "Controls ="; done = 1; next } { print }' "$WEB/keymap.ini" >> "$DIST/zelda3.ini"
+cp "$WEB/keymap.ini" "$DIST/keymap.ini"
 # Build id = hash of the files the page loads; app.js adds it as ?v= to bust stale caches
 BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini snes.js snes.wasm keymap.ini ./*.js style.css sync/*.js | sha256sum | cut -c1-12)
 # Same for the page's own module imports (app.js -> sync/*.js -> fields.js)

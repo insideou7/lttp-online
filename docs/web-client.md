@@ -62,10 +62,28 @@ module, for example.
 
 The desktop OpenGL output is not built; the web config forces `OutputMethod = SDL`. The page's
 `zelda3.ini` is upstream's with `WindowScale = 3`, `AudioSamples = 1024` and autosave off.
-Keyboard controls come from `web/keymap.ini` (WASD to move, F/G = Select/Start, J/M = A/B,
-I/L = X/Y, Q/E = L/R; arrows, Enter and Right Shift still work). `build.sh` drops upstream's
-`[KeyMap]` entries with the same names and appends that file, which also unbinds zelda3's
-single-letter cheat and debug keys. To remap, edit that file and the table in `web/site/index.html`.
+Controls are read by the page, not by zelda3, so players can remap them (below). `build.sh` drops
+upstream's `[KeyMap]` entries named in `web/keymap.ini` and appends that file with `Controls`
+emptied, which also unbinds zelda3's single-letter cheat and debug keys. SDL's gamepad support is
+off in the web build (no `SDL_INIT_GAMECONTROLLER`); the page passes the held buttons to the game
+each animation frame with `web_set_buttons()`.
+
+## Controls and remapping
+
+`site/controls.js` draws an SNES-style controller (an original SVG) in the Controls card, with
+each button labelled with its key. Clicking a button (or focusing it and pressing Enter) waits for
+the next key, or gamepad button on the Gamepad tab, and binds it at once, even mid-game. A key
+already used by another button swaps with it. Tab and F1-F12 are refused (turbo and save states).
+Bindings are kept per browser in `localStorage` (`lttp-controls`); "Reset to defaults" clears them.
+
+Defaults come from `web/keymap.ini`: WASD to move, F/G = Select/Start, J/M = A/B, I/L = X/Y,
+Q/E = L/R, and a second `Controls` line of backups (arrows, Enter, Right Shift) that work unless
+given to another button. Gamepads use the standard layout by position (bottom = B, right = A,
+left = Y, top = X) and the left stick always moves.
+
+Both backends use the same module: zelda3 through `web_set_buttons()`, the emulator by calling
+`controls.buttons()` before each frame. Bound keys are taken in the capture phase and stopped, so
+the game's own key handling never sees them. A tap shorter than a frame still counts.
 
 ## Updating zelda3
 
@@ -95,8 +113,8 @@ frame in Chromium.
   (Link's sprite, heart color, music) don't make friends' copies differ. ROMs without a code use
   their SHA-1.
 - **Running it.** `site/emu.js` runs frames at 60.1 Hz from `requestAnimationFrame`, draws the
-  512x448 picture to the canvas, plays sound through an AudioWorklet, and maps keys from the same
-  `keymap.ini` the zelda3 build uses (copied to `dist/`), plus gamepads. Tab held is turbo;
+  512x448 picture to the canvas, plays sound through an AudioWorklet, and takes its buttons from
+  `controls.js`, like zelda3. Tab held is turbo;
   Shift+F1-F10 saves a state, F1-F10 loads it. Battery saves and states are in IndexedDB per game
   id, so each seed has its own save files.
 - **C side.** `web/src/emu_api.c` exports the frame, picture, sound, RAM, VRAM/CGRAM, SRAM and
