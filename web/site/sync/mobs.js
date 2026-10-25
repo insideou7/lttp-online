@@ -196,10 +196,12 @@ export class MobSync {
     this.writtenKey = msg.k;
   }
 
-  // The owner's game only runs enemies near its own screen and drops the
-  // rest. Ours, out of its sight, stay in our game: in a free slot of the
-  // owner's copy (moved there if the owner uses theirs), kept from being
-  // overwritten. Once the owner comes close, its own copy takes over.
+  // The owner's game only has the enemies around its own screen: it loads
+  // them as its camera comes near and drops them once far. So its copy only
+  // says something is gone for what's on its screen. Ours elsewhere stay in
+  // our game: in a free slot of the owner's copy (moved there if the owner
+  // uses theirs), kept from being overwritten. Once the owner sees them, its
+  // own copy takes over.
   keepUnseen(snap, cam, keep) {
     const ram = this.ram;
     const camX = cam[0] | (cam[1] << 8), camY = cam[2] | (cam[3] << 8);
@@ -210,8 +212,8 @@ export class MobSync {
     for (let s = 0; s < 16; s++) {
       if (keep.has(s) || !ram.get(STATE + s)) continue;
       const x = slotX(now, s), y = slotY(now, s);
-      // Only what we can see but the owner can't.
-      if (!outOfSight(x - camX, y - camY) || outOfSight(x - ourX, y - ourY)) continue;
+      // Only what our game runs but the owner can't see.
+      if (onScreen(x - camX, y - camY) || !active(x - ourX, y - ourY)) continue;
       // The owner has it too (it just came into sight there): theirs counts.
       const type = ram.get(TYPE + s);
       if ([...Array(16).keys()].some((j) => theirs(STATE, j) && theirs(TYPE, j) === type &&
@@ -248,9 +250,10 @@ export class MobSync {
 }
 
 const camera = (ram) => [ram.get(0xE2), ram.get(0xE3), ram.get(0xE8), ram.get(0xE9)];
-// Would the game drop a sprite at (x, y) from the camera? As
-// Sprite_PrepOamCoordOrDoubleRet: more than 64 pixels off the screen (0x40
-// here), plus 16 so a sprite right at that line isn't in both games.
-const outOfSight = (x, y) => ((x + 0x50) & 0xffff) >= 0x190 || ((y + 0x50) & 0xffff) >= 0x190;
+// Is a sprite at (x, y) from the camera on screen (its middle)?
+const onScreen = (x, y) => ((x + 8) & 0xffff) < 0x100 && ((y + 8) & 0xffff) < 0xE0;
+// Does the game keep running it? As Sprite_PrepOamCoordOrDoubleRet: up to 64
+// pixels off the screen.
+const active = (x, y) => ((x + 0x40) & 0xffff) < 0x170 && ((y + 0x40) & 0xffff) < 0x170;
 
 const int = (s) => Number.isInteger(s) && s >= 0 && s < 16;
