@@ -7,6 +7,8 @@
 #   pages       GitHub Pages. Set Settings > Pages > Source to "GitHub Actions".
 #   (unset)     GitHub Pages if the repo is public, otherwise build only.
 #
+# Optional variable SYNC_URL: the multiplayer sync server (docs/multiplayer.md).
+#
 # The site never contains a ROM or extracted assets: players load their own
 # ROM in the browser. The "Check no game data" step enforces that.
 name: Web client
@@ -49,6 +51,10 @@ jobs:
 
       - name: Build
         run: web/build.sh
+        env:
+          # Multiplayer sync server, e.g. wss://sync.example.com/sync (repository
+          # variable). Empty: the page looks for /sync on its own host.
+          SYNC_URL: ${{ vars.SYNC_URL }}
 
       - name: Check no game data
         run: |

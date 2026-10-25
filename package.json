@@ -1,0 +1,11 @@
+{
+  "name": "lttp-online",
+  "private": true,
+  "type": "module",
+  "description": "A Link to the Past in the browser, with shared-unlock multiplayer",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server/index.js --static web/dist",
+    "test": "node --test server/test/*.test.js"
+  }
+}

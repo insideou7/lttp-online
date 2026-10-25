@@ -33,11 +33,40 @@
       <progress id="progress" hidden></progress>
     </section>
 
+    <section id="multiplayer" class="card">
+      <h2>Play with friends</h2>
+      <div id="mp-solo">
+        <p>Everyone in a room shares unlocks: items, heart containers, armor, swords, pendants,
+          crystals and opened chests. Rupees, bombs, arrows and health are your own, and each
+          player goes wherever they like.</p>
+        <div class="row">
+          <button id="mp-create" class="button secondary">Create room</button>
+          <span class="or">or</span>
+          <input id="mp-code" maxlength="12" placeholder="Room code" aria-label="Room code"
+            autocapitalize="characters" spellcheck="false">
+          <button id="mp-join" class="button secondary">Join</button>
+        </div>
+      </div>
+      <div id="mp-room" hidden>
+        <p>Room <strong id="mp-room-code"></strong>. Send this link to friends; they open it,
+          load their own ROM and press Play.</p>
+        <div class="row">
+          <input id="mp-link" readonly aria-label="Invite link">
+          <button id="mp-copy" class="button secondary">Copy link</button>
+        </div>
+      </div>
+      <label class="field">Your name
+        <input id="mp-name" maxlength="24" autocomplete="nickname" placeholder="Link"></label>
+      <button id="mp-leave" class="link" hidden>Leave room and play solo</button>
+    </section>
+
     <section id="game" hidden>
+      <div id="notices" aria-live="polite"></div>
       <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
       <div class="toolbar">
         <button id="fullscreen" class="link">Full screen</button>
         <span id="game-status" role="status"></span>
+        <span id="mp-status" role="status"></span>
       </div>
     </section>
 

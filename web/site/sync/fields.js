@@ -1,0 +1,210 @@
+// Which parts of the save area players share, and how two players' values merge.
+//
+// Addresses are offsets into SNES work RAM ($7E0000), so 0xF340 is $7EF340.
+// The table is backend-agnostic: zelda3 and an SNES emulator core (for
+// randomizer ROMs, which keep vanilla's item RAM layout) read the same bytes.
+//
+// Anything not listed here stays per player: rupees, bombs, arrows, current
+// health and magic, small keys, bottle contents, position, followers.
+//
+// Merge kinds:
+//   bits  bytes whose bits only ever get set (chests opened, pendants...).
+//         Merge is bitwise OR.
+//   max   a level that only goes up (gloves 1 -> 2). Merge is the maximum.
+//   sum   a count where each player's gains add up (heart pieces, capacity
+//         upgrades). Ops carry the increase, not the total.
+//   set   last writer wins, for items the game can also take away
+//         (the smiths borrow your sword, a Like Like eats your shield).
+
+const u8 = (addr) => ({
+  read: (ram) => ram.get(addr),
+  write: (ram, v) => ram.set(addr, v),
+});
+
+const item = (key, addr, label, extra = {}) => ({ key, kind: 'max', ...u8(addr), label, refresh: 'hud', ...extra });
+
+export const FIELDS = [
+  // Per-room dungeon flags: chests, keys, doors, bosses, visited quadrants.
+  { key: 'rooms', kind: 'bits', addr: 0xF000, len: 0x250 },
+  // Overworld area flags: heart pieces taken, bombed walls, opened entrances.
+  { key: 'overworld', kind: 'bits', addr: 0xF280, len: 0x80 },
+  { key: 'masterSwordFlags', kind: 'bits', addr: 0xF300, len: 2 },
+
+  // Bow: $7EF340 is 1 bow, 2 bow+arrows, 3 silver bow, 4 silver bow+arrows.
+  // The "+arrows" half depends on the player's own arrow count, so only the
+  // tier is shared.
+  {
+    key: 'bow', kind: 'max', label: ['', 'Bow', 'Silver Arrows'], refresh: 'hud',
+    read: (ram) => { const v = ram.get(0xF340); return v >= 3 ? 2 : v >= 1 ? 1 : 0; },
+    write: (ram, tier) => {
+      if (!tier) return ram.set(0xF340, 0);
+      const arrows = ram.get(0xF377) > 0 ? 1 : 0;
+      ram.set(0xF340, (tier === 2 ? 3 : 1) + arrows);
+    },
+  },
+  item('boomerang', 0xF341, ['', 'Boomerang', 'Magical Boomerang']),
+  item('hookshot', 0xF342, 'Hookshot'),
+  // 1 mushroom, 2 magic powder, 0 after giving the mushroom to the witch.
+  item('mushroom', 0xF344, ['', 'Mushroom', 'Magic Powder'], { kind: 'set' }),
+  item('fireRod', 0xF345, 'Fire Rod'),
+  item('iceRod', 0xF346, 'Ice Rod'),
+  item('bombos', 0xF347, 'Bombos Medallion'),
+  item('ether', 0xF348, 'Ether Medallion'),
+  item('quake', 0xF349, 'Quake Medallion'),
+  item('lamp', 0xF34A, 'Lamp'),
+  item('hammer', 0xF34B, 'Magic Hammer'),
+  item('flute', 0xF34C, ['', 'Shovel', 'Flute', 'Flute (bird awake)']),
+  item('net', 0xF34D, 'Bug-Catching Net'),
+  item('book', 0xF34E, 'Book of Mudora'),
+  item('somaria', 0xF350, 'Cane of Somaria'),
+  item('byrna', 0xF351, 'Cane of Byrna'),
+  item('cape', 0xF352, 'Magic Cape'),
+  item('mirror', 0xF353, ['', 'Letter', 'Magic Mirror']),
+  item('gloves', 0xF354, ['', 'Power Glove', "Titan's Mitt"], { refresh: 'armor' }),
+  item('boots', 0xF355, 'Pegasus Boots'),
+  item('flippers', 0xF356, "Zora's Flippers"),
+  item('moonPearl', 0xF357, 'Moon Pearl'),
+  // 255 while the smiths have it.
+  item('sword', 0xF359, ['', "Fighter's Sword", 'Master Sword', 'Tempered Sword', 'Golden Sword'],
+    { kind: 'set', refresh: 'sword' }),
+  item('shield', 0xF35A, ['', "Fighter's Shield", 'Fire Shield', 'Mirror Shield'],
+    { kind: 'set', refresh: 'shield' }),
+  item('armor', 0xF35B, ['', 'Blue Mail', 'Red Mail'], { refresh: 'armor' }),
+
+  // Bottles: owning one is shared, what's in it is not. Value is a 4-bit mask
+  // of owned slots; a newly shared slot arrives as an empty bottle.
+  {
+    key: 'bottles', kind: 'bits', len: 1, label: 'Bottle', refresh: 'hud',
+    read: (ram) => {
+      let m = 0;
+      for (let i = 0; i < 4; i++) if (ram.get(0xF35C + i)) m |= 1 << i;
+      return [m];
+    },
+    write: (ram, [m]) => {
+      let first = 0;
+      for (let i = 0; i < 4; i++) {
+        if (!(m & (1 << i))) continue;
+        if (!ram.get(0xF35C + i)) ram.set(0xF35C + i, 2);  // 2 = empty bottle
+        if (!first) first = i + 1;
+      }
+      if (first && !ram.get(0xF34F)) ram.set(0xF34F, first);  // selected bottle
+    },
+  },
+
+  { key: 'compass', kind: 'bits', addr: 0xF364, len: 2 },
+  { key: 'bigKey', kind: 'bits', addr: 0xF366, len: 2 },
+  { key: 'dungeonMap', kind: 'bits', addr: 0xF368, len: 2 },
+
+  // Heart pieces and containers, counted together in quarter hearts so four
+  // pieces turn into a container. The game zeroes the piece count a moment
+  // before adding the container, so this is a sum: only increases are sent.
+  {
+    key: 'heartQuarters', kind: 'sum', max: 80, label: 'Heart', refresh: 'hud',
+    read: (ram) => (ram.get(0xF36C) >> 3) * 4 + (ram.get(0xF36B) & 3),
+    write: (ram, q) => {
+      q = Math.min(q, 80);
+      ram.set(0xF36C, (q >> 2) * 8);
+      ram.set(0xF36B, q & 3);
+    },
+  },
+  { key: 'bombUpgrades', kind: 'sum', max: 7, ...u8(0xF370), label: 'Bomb capacity', refresh: 'hud' },
+  { key: 'arrowUpgrades', kind: 'sum', max: 7, ...u8(0xF371), label: 'Arrow capacity', refresh: 'hud' },
+
+  { key: 'pendants', kind: 'bits', addr: 0xF374, len: 1, label: 'Pendant', refresh: 'hud' },
+  { key: 'abilities', kind: 'bits', addr: 0xF379, len: 1 },
+  { key: 'crystals', kind: 'bits', addr: 0xF37A, len: 1, label: 'Crystal', refresh: 'hud' },
+  { key: 'magic', kind: 'max', ...u8(0xF37B), label: ['', 'Half Magic', 'Quarter Magic'], refresh: 'hud' },
+
+  // Story progress: 1 has sword from uncle, 2 rescued Zelda, 3 beat Agahnim.
+  { key: 'progress', kind: 'max', ...u8(0xF3C5) },
+  { key: 'progressFlags', kind: 'bits', addr: 0xF3C6, len: 1 },
+  { key: 'mapIcons', kind: 'max', ...u8(0xF3C7) },
+  { key: 'progressFlags3', kind: 'bits', addr: 0xF3C9, len: 1 },
+];
+
+export const FIELD_BY_KEY = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
+
+// Plain byte-array fields read and write their address range directly.
+for (const f of FIELDS) {
+  if (f.kind === 'bits' && !f.read) {
+    f.read = (ram) => { const a = []; for (let i = 0; i < f.len; i++) a.push(ram.get(f.addr + i)); return a; };
+    f.write = (ram, a) => { for (let i = 0; i < f.len; i++) ram.set(f.addr + i, a[i]); };
+  }
+}
+
+export function emptyValue(f) {
+  return f.kind === 'bits' ? new Array(f.len).fill(0) : 0;
+}
+
+// --- Ops -------------------------------------------------------------------
+// An op is the smallest message that describes one player's change:
+//   { k, bits: { index: mask } }   bits newly set
+//   { k, v }                       new value (max, set)
+//   { k, d }                       increase (sum)
+
+// Apply an op to a field value, returning the new value (does not mutate).
+export function applyOp(f, value, op) {
+  switch (f.kind) {
+    case 'bits': {
+      const out = value.slice();
+      for (const [i, m] of Object.entries(op.bits)) {
+        const idx = Number(i);
+        if (idx >= 0 && idx < f.len) out[idx] = (out[idx] | m) & 0xff;
+      }
+      return out;
+    }
+    case 'max': return Math.max(value, op.v & 0xff);
+    case 'set': return op.v & 0xff;
+    case 'sum': return Math.max(0, Math.min(f.max ?? 255, value + op.d));
+  }
+  throw new Error('unknown field kind ' + f.kind);
+}
+
+// Is this op well formed for its field? The server checks every op it relays.
+export function validOp(op) {
+  const f = op && FIELD_BY_KEY[op.k];
+  if (!f) return false;
+  const int = (x) => Number.isInteger(x);
+  switch (f.kind) {
+    case 'bits':
+      return op.bits && typeof op.bits === 'object' &&
+        Object.entries(op.bits).every(([i, m]) => int(Number(i)) && Number(i) >= 0 && Number(i) < f.len && int(m) && m > 0 && m < 256);
+    case 'max': case 'set': return int(op.v) && op.v >= 0 && op.v < 256;
+    case 'sum': return int(op.d) && op.d > 0 && op.d <= (f.max ?? 255);
+  }
+  return false;
+}
+
+// The ops that turn `from` into `to` for one field, or [] if nothing new.
+// For bits and max only gains count; losses are ignored (and repaired).
+export function diff(f, from, to) {
+  switch (f.kind) {
+    case 'bits': {
+      const bits = {};
+      let any = false;
+      for (let i = 0; i < f.len; i++) {
+        const m = to[i] & ~from[i] & 0xff;
+        if (m) { bits[i] = m; any = true; }
+      }
+      return any ? [{ k: f.key, bits }] : [];
+    }
+    case 'max': return to > from ? [{ k: f.key, v: to }] : [];
+    case 'set': return to !== from ? [{ k: f.key, v: to }] : [];
+    case 'sum': return to > from ? [{ k: f.key, d: to - from }] : [];
+  }
+  return [];
+}
+
+export function snapshot(ram) {
+  return Object.fromEntries(FIELDS.map((f) => [f.key, f.read(ram)]));
+}
+
+// A readable name for what an op gave, for "Sam found the Hookshot" notices.
+// Returns null for ops that aren't worth announcing (map flags etc.).
+export function describeOp(op, value) {
+  const f = FIELD_BY_KEY[op.k];
+  if (!f || !f.label) return null;
+  if (Array.isArray(f.label)) return f.label[value] || null;
+  if (f.key === 'heartQuarters') return op.d >= 4 ? 'a Heart Container' : 'a Piece of Heart';
+  return f.label;
+}

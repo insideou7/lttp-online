@@ -12,6 +12,8 @@
 #
 # Requires: emsdk on PATH (emcc), git, curl, tar with bzip2.
 # Usage: web/build.sh            (EMSDK=/path/to/emsdk to source emsdk_env.sh)
+#        SYNC_URL=wss://host/sync web/build.sh   when the multiplayer sync server
+#        isn't at /sync on the same host as the page (see docs/multiplayer.md)
 set -euo pipefail
 
 ZELDA3_REPO=https://github.com/snesrev/zelda3
@@ -109,7 +111,7 @@ cp "$PYO"/pyodide/{pyodide.mjs,pyodide.js,pyodide.asm.js,pyodide.asm.wasm,python
 for w in "${PYODIDE_WHEELS[@]}"; do cp "$PYO/pyodide/${w%% *}" "$DIST/pyodide/"; done
 
 # 4. The page, plus a browser-friendly config (upstream zelda3.ini with a few changes)
-cp "$WEB"/site/* "$DIST/"
+cp -r "$WEB"/site/. "$DIST/"
 sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
     -e 's/^WindowScale = .*/WindowScale = 3/' \
     -e 's/^AudioSamples = .*/AudioSamples = 1024/' \
@@ -123,8 +125,10 @@ sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
 printf '\n' >> "$DIST/zelda3.ini"
 cat "$WEB/keymap.ini" >> "$DIST/zelda3.ini"
 # Build id = hash of the files the page loads; app.js adds it as ?v= to bust stale caches
-BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini app.js extract-worker.js style.css | sha256sum | cut -c1-12)
+BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini app.js extract-worker.js style.css sync/*.js | sha256sum | cut -c1-12)
+# Same for the page's own module imports (app.js -> sync/*.js -> fields.js)
+sed -i -E "s#(from '\./[^'?]*\.js)'#\1?v=$BUILD_ID'#" "$DIST/app.js" "$DIST"/sync/*.js
 sed -i -e "s/\"app.js\"/\"app.js?v=$BUILD_ID\"/" -e "s/\"style.css\"/\"style.css?v=$BUILD_ID\"/" "$DIST/index.html"
-printf '{"zelda3": "%s", "build": "%s"}\n' "$ZELDA3_COMMIT" "$BUILD_ID" > "$DIST/build.json"
+printf '{"zelda3": "%s", "build": "%s", "sync": "%s"}\n' "$ZELDA3_COMMIT" "$BUILD_ID" "${SYNC_URL:-}" > "$DIST/build.json"
 cp "$SRC/LICENSE.txt" "$DIST/ZELDA3_LICENSE.txt"
 echo "Built $DIST. Serve it with: python3 -m http.server -d $DIST 8080"
