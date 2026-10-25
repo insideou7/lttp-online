@@ -114,9 +114,11 @@ export class SyncClient {
     this.syncSent = false;
     if (!this.backend.inGame()) return;  // left the game meanwhile; sync again later
     const ram = this.backend.ram;
+    if (!snapshot(ram)) return;  // mid-transition; the next tick asks again
     for (const f of FIELDS) {
       const local = f.read(ram);
-      const room = state[f.key];
+      // A server from an older version may not know a field yet: keep ours.
+      const room = state[f.key] ?? (state[f.key] = local);
       const before = this.offline?.[f.key];
       let want;
       switch (f.kind) {
@@ -126,6 +128,8 @@ export class SyncClient {
         case 'set': want = before !== undefined && local !== before ? local : room; break;
         // Room total plus whatever this player gained while disconnected.
         case 'sum': want = Math.min(f.max ?? 255, room + (before !== undefined ? Math.max(0, local - before) : 0)); break;
+        // Room counts plus whatever this player picked up or used while disconnected.
+        case 'counts': want = room.map((r, i) => Math.max(0, Math.min(f.max, r + (before ? local[i] - before[i] : 0)))); break;
       }
       if (!same(want, local)) {
         f.write(ram, want);
@@ -145,6 +149,14 @@ export class SyncClient {
       const f = FIELD_BY_KEY[op.k];
       if (!f) continue;
       this.known[f.key] = applyOp(f, this.known[f.key], op);
+      if (f.kind === 'counts') {
+        // Works even mid-transition, when the field can't be read.
+        for (const [i, d] of Object.entries(op.d)) f.addAt(ram, Number(i), d);
+        if (f.refresh) this.pendingRefresh.add(f.refresh);
+        const what = describeOp(op);
+        if (what) this.onNotice({ from, name: this.playerName(from), what, op });
+        continue;
+      }
       const cur = f.read(ram);
       const next = f.kind === 'set' ? op.v : applyOp(f, cur, op);
       if (!same(next, cur)) {
@@ -165,8 +177,9 @@ export class SyncClient {
     }
     if (!this.ws || this.ws.readyState !== 1) return;
     if (!this.known) {
-      if (!this.syncSent) {
-        this.send({ t: 'sync', state: snapshot(this.backend.ram) });
+      const state = this.syncSent ? null : snapshot(this.backend.ram);
+      if (state) {
+        this.send({ t: 'sync', state });
         this.syncSent = true;
       }
       return;
@@ -175,6 +188,7 @@ export class SyncClient {
     const ops = [];
     for (const f of FIELDS) {
       const local = f.read(ram);
+      if (local === null) continue;  // mid-transition
       const known = this.known[f.key];
       for (const op of diff(f, known, local)) {
         ops.push(op);

@@ -17,7 +17,7 @@ function fakeGame() {
     ram: { get: (a) => mem[a], set: (a, v) => { mem[a] = v; } },
     inGame: () => mem[0x10] === 0x09,
     refresh: (kinds) => { refreshed.push(...kinds); return true; },
-    play() { mem[0x10] = 0x09; },
+    play() { mem[0x10] = 0x09; mem[0x40C] = 0xFF; mem[0xF36F] = 0xFF; },
     quit() { mem[0x10] = 0x01; },
   };
 }
@@ -117,7 +117,7 @@ test('two players share unlocks but keep their own consumables', async (t) => {
   // A finds the hookshot: B gets it and a notice.
   A.mem[0xF342] = 1;
   await until(() => B.mem[0xF342] === 1);
-  await until(() => b.notices.includes('Ann: Hookshot'));
+  await until(() => b.notices.includes('Ann: got Hookshot'));
   assert.ok(B.refreshed.includes('hud'));
 
   // Both pick up a heart piece at the same time: each ends with both pieces.
@@ -173,4 +173,44 @@ test('gains made while disconnected are kept on reconnect', async (t) => {
   A.mem[0xF36B] = 1;   // and one for A
   await until(() => b.known, 5000);  // client reconnects by itself
   await until(() => A.mem[0xF36B] === 2 && B.mem[0xF36B] === 2);
+});
+
+test('small keys are shared: picked up for everyone, spent for everyone', async (t) => {
+  const server = await startServer();
+  const A = fakeGame(), B = fakeGame();
+  A.play(); B.play();
+  const a = client(server, A, 'Ann', 'KEYSKEYS');
+  await until(() => a.known);
+  const b = client(server, B, 'Bo', 'KEYSKEYS');
+  t.after(() => { a.stop(); b.stop(); server.close(); });
+  await until(() => b.known);
+
+  // A enters the Eastern Palace (dungeon number x2 = 4, key slot 2) and the
+  // game loads the live key count.
+  A.mem[0x40C] = 4;
+  await new Promise((r) => setTimeout(r, 250));
+  A.mem[0xF36F] = A.mem[0xF37C + 2];
+  // A picks up two keys there; B, on the overworld, gets them in its count.
+  A.mem[0xF36F] = 2;
+  await until(() => B.mem[0xF37C + 2] === 2);
+  assert.ok(b.notices.includes('Ann: got a Small Key'));
+
+  // B enters the same dungeon and opens a door: A's live count drops.
+  B.mem[0x40C] = 4; B.mem[0xF36F] = B.mem[0xF37C + 2];
+  B.mem[0xF36F] = 1;
+  await until(() => A.mem[0xF36F] === 1);
+  assert.ok(a.notices.includes('Bo: used a Small Key'));
+
+  // A leaves: the game saves the live count, then marks "no dungeon".
+  A.mem[0xF37C + 2] = A.mem[0xF36F];
+  A.mem[0xF36F] = 0xFF;
+  await new Promise((r) => setTimeout(r, 250));
+  A.mem[0x40C] = 0xFF;
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(A.mem[0xF37C + 2], 1);
+  assert.equal(B.mem[0xF36F], 1);
+
+  // B uses the last key while A is outside: A's saved count follows.
+  B.mem[0xF36F] = 0;
+  await until(() => A.mem[0xF37C + 2] === 0);
 });

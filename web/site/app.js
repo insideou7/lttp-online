@@ -223,7 +223,7 @@ function startSync(game) {
       statusEl.textContent = text + (detail ? ` (${detail})` : '');
       statusEl.classList.toggle('error', state === 'unreachable' || state === 'error');
     },
-    onNotice: ({ name, what }) => showNotice(`<b>${escapeHtml(name)}</b> got ${escapeHtml(what)}`),
+    onNotice: ({ name, what }) => showNotice(`<b>${escapeHtml(name)}</b> ${escapeHtml(what)}`),
   });
   sync.start();
   window.lttpSync = sync;  // for debugging
