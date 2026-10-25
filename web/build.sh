@@ -16,6 +16,8 @@
 # Usage: web/build.sh            (EMSDK=/path/to/emsdk to source emsdk_env.sh)
 #        SYNC_URL=wss://host/sync web/build.sh   when the multiplayer sync server
 #        isn't at /sync on the same host as the page (see docs/multiplayer.md)
+#        CF_ANALYTICS_TOKEN=<token> web/build.sh   adds the Cloudflare Web Analytics
+#        beacon (cookieless visit counts) to the page (see docs/web-client.md)
 set -euo pipefail
 
 ZELDA3_REPO=https://github.com/snesrev/zelda3
@@ -150,6 +152,12 @@ BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini snes.js snes.wasm 
 # Same for the page's own module imports (app.js -> sync/*.js -> fields.js)
 sed -i -E "s#(from '\./[^'?]*\.js)'#\1?v=$BUILD_ID'#" "$DIST/app.js" "$DIST/ghosts.js" "$DIST"/sync/*.js
 sed -i -e "s/\"app.js\"/\"app.js?v=$BUILD_ID\"/" -e "s/\"style.css\"/\"style.css?v=$BUILD_ID\"/" "$DIST/index.html"
+# Optional Cloudflare Web Analytics beacon: cookieless page-view counts, no game data sent
+if [ -n "${CF_ANALYTICS_TOKEN:-}" ]; then
+  if ! [[ "$CF_ANALYTICS_TOKEN" =~ ^[A-Za-z0-9]+$ ]]; then echo "CF_ANALYTICS_TOKEN must be the bare token" >&2; exit 1; fi
+  BEACON="<script defer src=\"https://static.cloudflareinsights.com/beacon.min.js\" data-cf-beacon='{\"token\": \"$CF_ANALYTICS_TOKEN\"}'></script>"
+  sed -i "s#</body>#  $BEACON\n</body>#" "$DIST/index.html"
+fi
 printf '{"zelda3": "%s", "build": "%s", "sync": "%s"}\n' "$ZELDA3_COMMIT" "$BUILD_ID" "${SYNC_URL:-}" > "$DIST/build.json"
 cp "$SRC/LICENSE.txt" "$DIST/ZELDA3_LICENSE.txt"
 echo "Built $DIST. Serve it with: python3 -m http.server -d $DIST 8080"

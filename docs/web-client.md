@@ -28,6 +28,23 @@ The repository variable `DEPLOY_TARGET` picks where:
 
 Deploy by hand with `cd web && npx wrangler@4 deploy` after `web/build.sh`.
 
+### Visitor analytics
+
+The site can count visits with Cloudflare Web Analytics: free, no cookies, no game data sent, and it
+works on any host (including GitHub Pages). It shows page views, visitors, countries, browsers and
+devices. One-time setup:
+
+1. In the Cloudflare dashboard, open **Analytics & Logs > Web Analytics** and click **Add a site**.
+2. Enter the site's hostname (e.g. `insideou7.github.io`) and choose the manual JS snippet setup.
+3. Copy the token from the snippet (the value of `"token"` in `data-cf-beacon`).
+4. Add it as the repository variable `CF_ANALYTICS_TOKEN` (Settings > Secrets and variables >
+   Actions > Variables) and re-run the Web client workflow on `main`.
+
+The build then adds the beacon script to `index.html`. Without the variable, no analytics script is
+included. Cloudflare Web Analytics only counts page views; it has no custom events. How busy
+multiplayer is shows up as request counts for the sync Worker under **Workers & Pages** in the
+same dashboard.
+
 ## How it works
 
 1. **The player brings their own ROM.** The page asks for the US ROM, strips a copier header if
