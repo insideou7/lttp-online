@@ -33,8 +33,8 @@ export class SyncRoom {
   async fetch(request) {
     const code = new URL(request.url).searchParams.get('room').toUpperCase();
     if (!this.room) {
-      const state = await this.ctx.storage.get('state');
-      this.room = new Room(code, state ? { state } : null);
+      const { state, game } = Object.fromEntries(await this.ctx.storage.get(['state', 'game']));
+      this.room = new Room(code, state ? { state, game } : null);
     }
     const id = this.room.connect();
     if (id === null) return new Response('Room Full', { status: 503 });
@@ -48,10 +48,10 @@ export class SyncRoom {
       try { msg = JSON.parse(e.data); } catch { ws.close(1003); return; }
       // Positions and enemies (most messages) never change the saved progress.
       if (LIVE.has(msg?.t)) { this.deliver(this.room.message(id, msg)); return; }
-      const before = JSON.stringify(this.room.state);
+      const before = JSON.stringify([this.room.state, this.room.game]);
       this.deliver(this.room.message(id, msg));
-      const after = JSON.stringify(this.room.state);
-      if (after !== before) this.ctx.storage.put('state', this.room.state);
+      const after = JSON.stringify([this.room.state, this.room.game]);
+      if (after !== before) this.ctx.storage.put({ state: this.room.state, game: this.room.game });
     });
     const gone = () => {
       if (!this.sockets.delete(id)) return;

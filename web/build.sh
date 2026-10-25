@@ -6,6 +6,8 @@
 #   2. Compiles the game to WebAssembly with Emscripten (SDL2 port).
 #   3. Bundles Pyodide (Python in WebAssembly) and zelda3's asset tool, so the
 #      page can turn the player's own ROM into game assets in their browser.
+#   4. Compiles the LakeSnes SNES emulator core to WebAssembly, which runs
+#      randomizer seeds (ROMs zelda3 can't play).
 #
 # No ROM or extracted asset is downloaded or written to dist/. The page asks
 # the player for their ROM at run time.
@@ -18,6 +20,9 @@ set -euo pipefail
 
 ZELDA3_REPO=https://github.com/snesrev/zelda3
 ZELDA3_COMMIT=45a149d8b4bb8098f53d1009f76e76e7d8b79bbf
+# LakeSnes (MIT), dinkc64's maintained fork of angelo-wf/LakeSnes
+LAKESNES_REPO=https://github.com/dinkc64/LakeSnes
+LAKESNES_COMMIT=048a0d72568668f74e0cdf371dcd9e8efd614965
 SDL2_TAG=release-2.32.10   # the version Emscripten's sdl2 port uses
 PYODIDE_VERSION=0.27.7
 PYODIDE_WHEELS=(
@@ -110,7 +115,22 @@ rm -rf "$DIST/pyodide"; mkdir -p "$DIST/pyodide"
 cp "$PYO"/pyodide/{pyodide.mjs,pyodide.js,pyodide.asm.js,pyodide.asm.wasm,python_stdlib.zip,pyodide-lock.json} "$DIST/pyodide/"
 for w in "${PYODIDE_WHEELS[@]}"; do cp "$PYO/pyodide/${w%% *}" "$DIST/pyodide/"; done
 
-# 4. The page, plus a browser-friendly config (upstream zelda3.ini with a few changes)
+# 4. SNES emulator core for randomizer seeds
+LAKE="$CACHE/LakeSnes"
+if [ ! -d "$LAKE/.git" ]; then
+  git clone --quiet "$LAKESNES_REPO" "$LAKE"
+fi
+git -C "$LAKE" fetch --quiet origin "$LAKESNES_COMMIT" 2>/dev/null || true
+git -C "$LAKE" checkout --quiet --force "$LAKESNES_COMMIT"
+LAKE_SRCS=()
+for f in spc dsp apu cpu dma ppu cart cx4 input statehandler snes snes_other; do LAKE_SRCS+=("$LAKE/snes/$f.c"); done
+emcc -O3 -flto -w -I "$LAKE/snes" "${LAKE_SRCS[@]}" "$WEB/src/emu_api.c" -o "$DIST/snes.js" \
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSnes \
+  -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web \
+  -sEXPORTED_FUNCTIONS=_malloc,_free -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAP16,HEAP32
+cp "$LAKE/LICENSE.txt" "$DIST/LAKESNES_LICENSE.txt"
+
+# 5. The page, plus a browser-friendly config (upstream zelda3.ini with a few changes)
 cp -r "$WEB"/site/. "$DIST/"
 sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
     -e 's/^WindowScale = .*/WindowScale = 3/' \
@@ -124,10 +144,11 @@ sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
        { print }' "$WEB/keymap.ini" - > "$DIST/zelda3.ini"
 printf '\n' >> "$DIST/zelda3.ini"
 cat "$WEB/keymap.ini" >> "$DIST/zelda3.ini"
+cp "$WEB/keymap.ini" "$DIST/keymap.ini"   # the emulator reads the same controls
 # Build id = hash of the files the page loads; app.js adds it as ?v= to bust stale caches
-BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini app.js extract-worker.js style.css sync/*.js | sha256sum | cut -c1-12)
+BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini snes.js snes.wasm keymap.ini ./*.js style.css sync/*.js | sha256sum | cut -c1-12)
 # Same for the page's own module imports (app.js -> sync/*.js -> fields.js)
-sed -i -E "s#(from '\./[^'?]*\.js)'#\1?v=$BUILD_ID'#" "$DIST/app.js" "$DIST"/sync/*.js
+sed -i -E "s#(from '\./[^'?]*\.js)'#\1?v=$BUILD_ID'#" "$DIST/app.js" "$DIST/ghosts.js" "$DIST"/sync/*.js
 sed -i -e "s/\"app.js\"/\"app.js?v=$BUILD_ID\"/" -e "s/\"style.css\"/\"style.css?v=$BUILD_ID\"/" "$DIST/index.html"
 printf '{"zelda3": "%s", "build": "%s", "sync": "%s"}\n' "$ZELDA3_COMMIT" "$BUILD_ID" "${SYNC_URL:-}" > "$DIST/build.json"
 cp "$SRC/LICENSE.txt" "$DIST/ZELDA3_LICENSE.txt"
