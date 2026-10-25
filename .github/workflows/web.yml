@@ -1,0 +1,106 @@
+# Builds the browser client and, on pushes to main, deploys it.
+#
+# Where it deploys is set by the repository variable DEPLOY_TARGET
+# (Settings > Secrets and variables > Actions > Variables):
+#   cloudflare  Cloudflare Workers. Needs secrets CLOUDFLARE_API_TOKEN and
+#               CLOUDFLARE_ACCOUNT_ID. Config: web/wrangler.toml.
+#   pages       GitHub Pages. Set Settings > Pages > Source to "GitHub Actions".
+#   (unset)     Build only.
+#
+# The site never contains a ROM or extracted assets: players load their own
+# ROM in the browser. The "Check no game data" step enforces that.
+name: Web client
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/web.yml']
+  pull_request:
+    paths: ['web/**', '.github/workflows/web.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EMSDK_VERSION: 4.0.10
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Cache Pyodide and SDL2 downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/.cache/pyodide-*
+            web/.cache/SDL2
+          key: web-deps-${{ hashFiles('web/build.sh') }}
+
+      - name: Build
+        run: web/build.sh
+
+      - name: Check no game data
+        run: |
+          bad=$(find web/dist -type f \( -iname '*.sfc' -o -iname '*.smc' -o -name 'zelda3_assets.dat' \))
+          if [ -n "$bad" ]; then echo "Game data found in dist: $bad"; exit 1; fi
+          du -sh web/dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 7
+
+      - if: vars.DEPLOY_TARGET == 'pages' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy-cloudflare:
+    if: vars.DEPLOY_TARGET == 'cloudflare' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: cloudflare
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web
+          wranglerVersion: "4.152.0"
+          command: deploy
+
+  deploy-pages:
+    if: vars.DEPLOY_TARGET == 'pages' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
