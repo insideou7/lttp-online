@@ -132,10 +132,10 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
 - Pushed blocks go through the same tile changes but haven't been tried with two players.
 - Overworld changes are shared while players are in the same 512x512 block of an area; someone
   in another block of a big area catches up when they walk into the host's block.
-  Another player carrying a pot isn't shown.
 
 - Other players are drawn over everything, including the HUD and things they'd walk behind
-  (doorways, tree tops). The people and enemies they carry or fight aren't shown, only their Link.
+  (doorways, tree tops). Their Link is shown with whatever he carries over his head (a pot, bush or
+  rock); the people who follow them (Zelda, the old man) aren't.
 
 - If two players are in the same dungeon room when one opens a chest, the other's game still shows
   it closed until they leave the room, and could open it again.

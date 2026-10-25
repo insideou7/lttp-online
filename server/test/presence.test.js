@@ -65,6 +65,22 @@ test('captures Link\'s sprites as one image', () => {
   assert.equal(captureLink(g.ram, g.video), null);
 });
 
+test('the ghost shows what Link carries', () => {
+  const g = fakeGame();
+  // A bush (sprite slot 3, carried) 16 pixels above Link, in OAM slot 20.
+  g.mem[0xDD0 + 3] = 0x0A;
+  g.mem[0xD10 + 3] = 1000 & 0xff; g.mem[0xD30 + 3] = 1000 >> 8;
+  g.mem[0xD00 + 3] = (2000 - 4) & 0xff; g.mem[0xD20 + 3] = (2000 - 4) >> 8;
+  g.mem[0xF70 + 3] = 12;
+  const o = 0x800 + 20 * 4;
+  g.mem[o] = 100; g.mem[o + 1] = 84; g.mem[o + 2] = 0x00; g.mem[o + 3] = 7 << 1;
+  g.mem[0xA20 + 20] = 2;
+  const img = captureLink(g.ram, g.video);
+  assert.deepEqual([img.ox, img.oy, img.w, img.h], [0, -16, 16, 24]);
+  g.mem[0xDD0 + 3] = 0x09;                    // put down: not his any more
+  assert.equal(captureLink(g.ram, g.video).h, 16);
+});
+
 test('sends a pose image once, then only its id', () => {
   const g = fakeGame();
   const s = new PresenceSender(g);

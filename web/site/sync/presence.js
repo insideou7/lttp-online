@@ -54,16 +54,32 @@ export function captureLink(ram, video) {
   const sy = (view.y - view.camY) << 16 >> 16;
   const sizes = video.objSizes();
   const parts = [];
-  for (let i = first + 11; i >= first; i--) {   // lower slots draw on top
+  const slot = (i) => {
     const a = 0x800 + i * 4;
     const y = ram.get(a + 1);
-    if (y === 0xf0) continue;                    // unused slot
+    if (y === 0xf0) return null;                 // unused slot
     const ext = (ram.get(0xA20 + i) & 3);
     let x = ram.get(a) | ((ext & 1) << 8);
     if (x >= 256) x -= 512;
-    const dx = x - sx, dy = s8(y - sy);
-    if (dx < -48 || dx > 48) continue;           // hidden or not Link's
-    parts.push({ dx, dy, size: sizes[ext >> 1], tile: ram.get(a + 2), attr: ram.get(a + 3) });
+    return { x, y, size: sizes[ext >> 1], tile: ram.get(a + 2), attr: ram.get(a + 3) };
+  };
+  const add = (q) => parts.push({ dx: q.x - sx, dy: s8(q.y - sy), size: q.size, tile: q.tile, attr: q.attr });
+  for (let i = first + 11; i >= first; i--) {   // lower slots draw on top
+    const q = slot(i);
+    if (!q || q.x - sx < -48 || q.x - sx > 48) continue;   // hidden or not Link's
+    add(q);
+  }
+  // Whatever he carries over his head (a bush, pot, rock...) is a sprite of
+  // its own, drawn elsewhere in OAM: take the entries where it is.
+  for (let k = 0; k < 16; k++) {
+    if (ram.get(0xDD0 + k) !== 0x0A) continue;
+    const cx = ((ram.get(0xD10 + k) | (ram.get(0xD30 + k) << 8)) - view.camX) << 16 >> 16;
+    const cy = ((ram.get(0xD00 + k) | (ram.get(0xD20 + k) << 8)) - ram.get(0xF70 + k) - view.camY) << 16 >> 16;
+    for (let i = 127; i >= 0; i--) {
+      if (i >= first && i < first + 12) continue;
+      const q = slot(i);
+      if (q && Math.abs(q.x - cx) <= 8 && Math.abs(s8(q.y - cy)) <= 8 && Math.abs(cy - sy) < 48) add(q);
+    }
   }
   if (!parts.length) return null;
   const ox = Math.min(...parts.map((q) => q.dx)), oy = Math.min(...parts.map((q) => q.dy));

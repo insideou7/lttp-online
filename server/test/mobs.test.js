@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { createServer } from '../index.js';
 import { SyncClient } from '../../web/site/sync/client.js';
 import { Room } from '../../web/site/sync/room.js';
-import { areaKey, readSnapshot, writeSnapshot, SNAPSHOT_SIZE } from '../../web/site/sync/mobs.js';
+import { areaKey, readSnapshot, writeSnapshot, SNAPSHOT_SIZE, MobSync } from '../../web/site/sync/mobs.js';
+import { toBase64 } from '../../web/site/sync/presence.js';
 
 const STATE = 0xDD0, TYPE = 0xE20, HEALTH = 0xE50, X = 0xD10;
 
@@ -40,6 +41,18 @@ test('snapshot round trip, keeping chosen slots', () => {
   writeSnapshot(b.ram, snap, new Set([5]));
   assert.equal(b.mem[TYPE + 3], 0x41);
   assert.equal(b.mem[TYPE + 5], 0x42);   // kept
+});
+
+test('what the owner carries stays off our Link\'s head', () => {
+  const owner = fakeGame(), us = fakeGame();
+  owner.spawn(4, 0xEC, 0, 100);
+  owner.mem[STATE + 4] = 0x0A;                // over the owner's Link's head
+  const m = new MobSync(us, () => {});
+  m.onMobs({ k: 'u12', d: toBase64(readSnapshot(owner.ram)) });
+  assert.equal(us.mem[STATE + 4], 0);
+  owner.mem[STATE + 4] = 0x0B;                // thrown: everyone sees it fly
+  m.onMobs({ k: 'u12', d: toBase64(readSnapshot(owner.ram)) });
+  assert.equal(us.mem[STATE + 4], 0x0B);
 });
 
 test('room: first in an area owns it, ownership passes on', () => {
