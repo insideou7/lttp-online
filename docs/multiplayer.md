@@ -116,15 +116,28 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   handed to the host as new sprites (`hit` with `n`), so they don't vanish.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
-  redraw the HUD, sword, shield and armor after a remote change. An SNES emulator backend for
-  randomizer ROMs can implement the same interface over its WRAM, since randomizers keep vanilla's
-  item layout. To show your Link to others a backend also provides `video` (VRAM, CGRAM and the
-  sprite tile base); zelda3 exports them from `web_api.c`, and an emulator core has them anyway.
-  For outdoor tile redraws it provides `map16(v)`, the four 8x8 tile words of map16 tile `v`
-  (zelda3: `web_map16_table()`; on a ROM it's the game's map16-to-map8 table).
+  redraw the HUD, sword, shield and armor after a remote change. To show your Link to others a
+  backend also provides `video` (VRAM, CGRAM and the sprite tile base); zelda3 exports them from
+  `web_api.c`. `snes-backend.js` does the same for the SNES emulator that runs randomizer seeds
+  (see [web-client.md](web-client.md#randomizer-seeds)): randomizers keep the game's RAM layout,
+  so everything above works unchanged; its `refresh()` calls the game's own redraw routines.
+  For outdoor tile redraws a backend provides `map16(v)`, the four 8x8 tile words of map16 tile
+  `v` (zelda3: `web_map16_table()`; the SNES backend reads the game's map16-to-map8 table from
+  the ROM).
+- One game per room: `hello` carries the ROM's game id and label (`rom-info.js`). The first player
+  sets the room's game, which is kept with its progress; a player with a different seed gets
+  `wrong-game` and isn't let in, and their page says which seed the room plays. Pages from before
+  this count as the US game. A room with no progress and nobody in it takes the next game.
+- Randomizer-only items: `swapItems` ($7EF38C, which of the items sharing a menu slot you own,
+  minus the mushroom the witch takes) and `bowFlags` ($7EF38E) are shared bits. They stay zero in
+  the plain game.
 
 ## Known limits
 
+- Randomizer seeds: only progress the plain game also has is shared (plus the swap-item flags).
+  Randomizer-only counters (keysanity key totals, triforce pieces, collected-item count) stay per
+  player. If a randomizer rewrote one of the game's redraw routines, another player's unlock still
+  arrives but shows on your HUD or Link only after the next room or area change.
 - Shared enemies: an enemy right at the edge of your screen can flicker when the room's host is
   some distance away, because your game stops running enemies it thinks are off screen. Bosses
   keep extra state outside the sprite tables and may act oddly for non-hosts. Items an enemy

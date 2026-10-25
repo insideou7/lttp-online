@@ -21,8 +21,11 @@ const PRESENCE_MS = 66;   // position updates: 15 a second, only when something 
 const same = (a, b) => (Array.isArray(a) ? a.every((x, i) => x === b[i]) : a === b);
 
 export class SyncClient {
-  constructor({ url, room, name, backend, onStatus = () => {}, onNotice = () => {}, WebSocketImpl = globalThis.WebSocket }) {
-    Object.assign(this, { url, room, name, backend, onStatus, onNotice, WebSocketImpl });
+  // game: { id, label } of the ROM being played (rom-info.js); the room only
+  // lets in players of the same game.
+  constructor({ url, room, name, backend, game = null, onStatus = () => {}, onNotice = () => {}, WebSocketImpl = globalThis.WebSocket }) {
+    Object.assign(this, { url, room, name, backend, game, onStatus, onNotice, WebSocketImpl });
+    this.roomGame = null;    // what the room plays, from the server
     this.ws = null;
     this.you = null;
     this.players = [];
@@ -72,7 +75,7 @@ export class SyncClient {
     ws.onopen = () => {
       opened = true;
       this.retryMs = 1000;
-      this.send({ t: 'hello', name: this.name });
+      this.send({ t: 'hello', name: this.name, ...(this.game && { game: this.game }) });
     };
     ws.onmessage = (e) => {
       let msg;
@@ -109,6 +112,7 @@ export class SyncClient {
         this.you = msg.you;
         this.players = msg.players;
         this.serverVersion = msg.v ?? 1;
+        this.roomGame = msg.game ?? null;
         this.presence?.reset();
         this.mobs.reset();
         this.tiles.reset();
@@ -142,6 +146,13 @@ export class SyncClient {
         break;
       case 'ops':
         this.onRemoteOps(msg.from, msg.ops);
+        break;
+      case 'wrong-game':
+        // Another seed: stay out of the room rather than mixing two games' progress.
+        this.roomGame = msg.game;
+        this.closed = true;
+        this.ws?.close();
+        this.status('wrong-game', msg.game?.label ?? 'another game');
         break;
       case 'error':
         console.warn('[sync] server:', msg.message);

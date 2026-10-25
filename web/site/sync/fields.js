@@ -158,6 +158,18 @@ export const FIELDS = [
   { key: 'progressFlags', kind: 'bits', addr: 0xF3C6, len: 1 },
   { key: 'mapIcons', kind: 'max', ...u8(0xF3C7) },
   { key: 'progressFlags3', kind: 'bits', addr: 0xF3C9, len: 1 },
+
+  // Randomizers only (zero in the plain game): which of the items that share
+  // a menu slot the player owns, for swapping with Y in the item menu.
+  // $7EF38C: 80 blue boomerang, 40 red boomerang, 20 mushroom, 10 powder,
+  // 04 shovel, 02 flute, 01 flute (bird awake). The mushroom is left out:
+  // the witch takes it away. $7EF38E: 80 bow, 40 silver bow.
+  {
+    key: 'swapItems', kind: 'bits', len: 1, refresh: 'hud',
+    read: (ram) => [ram.get(0xF38C) & ~0x20 & 0xff],
+    write: (ram, [m]) => ram.set(0xF38C, (ram.get(0xF38C) & 0x20) | (m & ~0x20 & 0xff)),
+  },
+  { key: 'bowFlags', kind: 'bits', addr: 0xF38E, len: 1, refresh: 'hud' },
 ];
 
 export const FIELD_BY_KEY = Object.fromEntries(FIELDS.map((f) => [f.key, f]));

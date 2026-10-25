@@ -4,7 +4,9 @@
 //
 // Protocol (JSON messages):
 //   client -> server
-//     { t: 'hello', name }                 first message after connecting
+//     { t: 'hello', name, game? }          first message after connecting; game =
+//                                          { id, label } of the ROM played (v4+;
+//                                          clients before that play the US game)
 //     { t: 'sync', state }                 player is in game with this save;
 //                                          seeds the room if it has no state yet
 //     { t: 'ops', ops: [...] }             player's own new unlocks (see fields.js)
@@ -18,7 +20,9 @@
 //     { t: 'tiles', k, b, c, f? }          surroundings changed (tiles.js) at place b:
 //                                          pairs of RAM address and byte; f = all so far
 //   server -> client
-//     { t: 'welcome', you, players }       reply to hello
+//     { t: 'welcome', you, players, game } reply to hello
+//     { t: 'wrong-game', game }            reply to hello: the room plays another
+//                                          game or seed; the player isn't let in
 //     { t: 'players', players }            someone joined or left
 //     { t: 'synced', state, seeded }       reply to sync: the room's progress
 //     { t: 'ops', from, ops }              another player's unlocks
@@ -30,7 +34,9 @@
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+// What clients from before protocol 4 play (only zelda3, the US game, existed).
+export const VANILLA_GAME = { id: 'lttp-us', label: 'A Link to the Past (US)' };
 const MAX_MOBS_B64 = 4096;
 const MAX_TILE_PAIRS = 0x2000;
 const MAX_PLAYERS = 8;
@@ -40,6 +46,10 @@ export class Room {
   constructor(code, saved = null) {
     this.code = code;
     this.state = saved?.state ?? null;   // null until the first player syncs
+    // Which ROM the room plays ({ id, label }, see web/site/rom-info.js): set by
+    // the first player, kept with the progress. Everyone must play the same
+    // seed, since item locations and progress flags only make sense in it.
+    this.game = saved?.game ?? null;
     this.players = new Map();             // id -> { name, at }
     this.owners = new Map();              // enemy area key -> player id running them
     this.nextId = 1;
@@ -107,10 +117,23 @@ export class Room {
     if (!this.players.has(id) || !msg || typeof msg !== 'object') return err('bad message');
     switch (msg.t) {
       case 'hello': {
+        const game = cleanGame(msg.game) ?? VANILLA_GAME;
+        const othersHere = [...this.players.values()].some((p) => p.joined);
+        // A room with no progress and nobody in it can switch to a new game.
+        if (!this.game || (!this.state && !othersHere)) this.game = game;
+        else if (this.game.id !== game.id) {
+          this.players.delete(id);
+          return [
+            { to: id, msg: { t: 'wrong-game', game: this.game } },
+            { to: id, msg: { t: 'error', message: `This room is playing ${this.game.label}.` } },
+          ];
+        }
+        const p = this.players.get(id);
+        p.joined = true;
         const name = String(msg.name ?? '').trim().slice(0, MAX_NAME);
-        if (name) this.players.get(id).name = name;
+        if (name) p.name = name;
         return [
-          { to: id, msg: { t: 'welcome', you: id, room: this.code, players: this.playerList(), v: PROTOCOL_VERSION } },
+          { to: id, msg: { t: 'welcome', you: id, room: this.code, players: this.playerList(), game: this.game, v: PROTOCOL_VERSION } },
           { to: 'others', from: id, msg: { t: 'players', players: this.playerList() } },
         ];
       }
@@ -130,7 +153,7 @@ export class Room {
         const ops = msg.ops.filter(validOp);
         for (const op of ops) {
           const f = FIELD_BY_KEY[op.k];
-          this.state[op.k] = applyOp(f, this.state[op.k], op);
+          this.state[op.k] = applyOp(f, this.state[op.k] ?? emptyValue(f), op);
         }
         if (!ops.length) return [];
         return [{ to: 'others', from: id, msg: { t: 'ops', from: id, ops } }];
@@ -174,16 +197,25 @@ export class Room {
     return err('unknown message type');
   }
 
-  toJSON() { return { code: this.code, state: this.state }; }
+  toJSON() { return { code: this.code, state: this.state, game: this.game }; }
+}
+
+// A game in the shape rom-info.js describes, or null.
+function cleanGame(g) {
+  if (!g || typeof g !== 'object' || typeof g.id !== 'string' || !/^[\x20-\x7e]{1,80}$/.test(g.id)) return null;
+  const label = typeof g.label === 'string' ? g.label.replace(/[^\x20-\x7e]/g, '').slice(0, 80) : '';
+  return { id: g.id, label: label || g.id };
 }
 
 // Accept a client's snapshot only in the exact shape fields.js describes.
+// A field the client doesn't know yet (an older page) starts out empty.
 function cleanState(s) {
   if (!s || typeof s !== 'object') return null;
   const out = {};
   for (const f of FIELDS) {
     const v = s[f.key];
     if (isArrayKind(f)) {
+      if (v === undefined) { out[f.key] = emptyValue(f); continue; }
       if (!Array.isArray(v) || v.length !== f.len) return null;
       out[f.key] = v.map((b) => (Number.isInteger(b) ? Math.max(0, Math.min(f.max ?? 255, b)) : 0));
     } else {

@@ -4,9 +4,12 @@
 // gameplay is running: loading into the world, dungeon, overworld, menus,
 // game over, boss victory, mirror warp, spawn select. Not intro, file select,
 // attract demo, save-and-quit, or the ending.
-const IN_GAME_MODULES = new Set([
+export const IN_GAME_MODULES = new Set([
   0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x15, 0x16, 0x18, 0x1B,
 ]);
+
+// Small and large sprite sizes for each OBSEL size setting.
+export const OBJ_SIZES = [[8, 16], [8, 32], [8, 64], [16, 32], [16, 64], [32, 64], [16, 32], [16, 32]];
 
 const REFRESH_BITS = { hud: 1, sword: 2, shield: 4, armor: 8 };
 
@@ -18,7 +21,6 @@ export function zelda3Backend(game) {
   };
   // The PPU's video memory, to picture this player's Link for the others.
   const u16 = (ptr, i) => game.HEAPU8[ptr + i * 2] | (game.HEAPU8[ptr + i * 2 + 1] << 8);
-  const OBJ_SIZES = [[8, 16], [8, 32], [8, 64], [16, 32], [16, 64], [32, 64], [16, 32], [16, 32]];
   const video = {
     vram: (word) => u16(game._web_vram(), word),
     cgram: (i) => u16(game._web_cgram(), i),
