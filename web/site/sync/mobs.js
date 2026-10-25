@@ -143,7 +143,9 @@ export class MobSync {
     const o = this.owner;
     if (!o || o.k !== k || o.n < 2 || !steady(this.ram)) return;
     if (o.id !== you) { this.reportHits(k, Date.now()); return; }
-    const d = toBase64(readSnapshot(this.ram));
+    // With the camera, so the others know which enemies our game can't see.
+    const snap = readSnapshot(this.ram);
+    const d = toBase64(Uint8Array.from([...snap, ...camera(this.ram)]));
     if (d === this.lastSent) return;
     this.lastSent = d;
     this.send({ t: 'mobs', k, d });
@@ -174,14 +176,16 @@ export class MobSync {
   onMobs(msg, now = Date.now()) {
     const ram = this.ram;
     if (msg.k !== areaKey(ram) || !steady(ram)) return;
-    const snap = fromBase64(msg.d);
-    if (snap.length !== SNAPSHOT_SIZE) return;
+    const bytes = fromBase64(msg.d);
+    if (bytes.length !== SNAPSHOT_SIZE && bytes.length !== SNAPSHOT_SIZE + 4) return;
+    const snap = bytes.subarray(0, SNAPSHOT_SIZE);
     this.reportHits(msg.k, now);
     const keep = new Set();
     for (const [s, until] of this.lease) {
       if (until > now) keep.add(s); else this.lease.delete(s);
     }
     for (let s = 0; s < 16; s++) if (ram.get(STATE + s) === S_CARRIED) keep.add(s);
+    if (bytes.length > SNAPSHOT_SIZE) this.keepUnseen(snap, bytes.subarray(SNAPSHOT_SIZE), keep);
     // Something the owner's Link carries would sit on our Link's head (the
     // game puts carried sprites over its own Link): leave it out. The ghost
     // shows it over theirs, and once thrown it's an ordinary sprite again.
@@ -190,6 +194,38 @@ export class MobSync {
     writeSnapshot(ram, snap, keep);
     this.written = readSnapshot(ram);
     this.writtenKey = msg.k;
+  }
+
+  // The owner's game only runs enemies near its own screen and drops the
+  // rest. Ours, out of its sight, stay in our game: in a free slot of the
+  // owner's copy (moved there if the owner uses theirs), kept from being
+  // overwritten. Once the owner comes close, its own copy takes over.
+  keepUnseen(snap, cam, keep) {
+    const ram = this.ram;
+    const camX = cam[0] | (cam[1] << 8), camY = cam[2] | (cam[3] << 8);
+    const now = (t, i) => ram.get(t + i);
+    const theirs = (t, i) => slotIn(snap, t, i);
+    const ourX = r16(ram, 0xE2), ourY = r16(ram, 0xE8);
+    const unseen = [];
+    for (let s = 0; s < 16; s++) {
+      if (keep.has(s) || !ram.get(STATE + s)) continue;
+      const x = slotX(now, s), y = slotY(now, s);
+      // Only what we can see but the owner can't.
+      if (!outOfSight(x - camX, y - camY) || outOfSight(x - ourX, y - ourY)) continue;
+      // The owner has it too (it just came into sight there): theirs counts.
+      const type = ram.get(TYPE + s);
+      if ([...Array(16).keys()].some((j) => theirs(STATE, j) && theirs(TYPE, j) === type &&
+          Math.abs(slotX(theirs, j) - x) < 32 && Math.abs(slotY(theirs, j) - y) < 32)) continue;
+      unseen.push(s);
+    }
+    const free = [...Array(16).keys()].filter((j) => !keep.has(j) && !slotIn(snap, STATE, j) && !unseen.includes(j));
+    for (const s of unseen) {
+      if (!slotIn(snap, STATE, s)) { keep.add(s); continue; }
+      const j = free.shift();
+      if (j === undefined) continue;          // no room: the owner's wins
+      writeSlot(ram, j, readSlot(ram, s));
+      keep.add(j);
+    }
   }
 
   // Owner: another player hit one of our enemies; their copy of it wins.
@@ -210,5 +246,11 @@ export class MobSync {
     writeSlot(ram, msg.s, slot);
   }
 }
+
+const camera = (ram) => [ram.get(0xE2), ram.get(0xE3), ram.get(0xE8), ram.get(0xE9)];
+// Would the game drop a sprite at (x, y) from the camera? As
+// Sprite_PrepOamCoordOrDoubleRet: more than 64 pixels off the screen (0x40
+// here), plus 16 so a sprite right at that line isn't in both games.
+const outOfSight = (x, y) => ((x + 0x50) & 0xffff) >= 0x190 || ((y + 0x50) & 0xffff) >= 0x190;
 
 const int = (s) => Number.isInteger(s) && s >= 0 && s < 16;

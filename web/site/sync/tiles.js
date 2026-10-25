@@ -105,7 +105,12 @@ export class RoomTiles {
       this.reset();
       this.place = p;
       this.last = this.read(p.regions);
-      if (pending?.b === p.b) this.apply(pending.entries);
+      this.pending = pending?.b === p.b ? pending : null;
+    }
+    if (this.pending?.b === p.b) {
+      const { entries } = this.pending;
+      this.pending = null;
+      this.apply(entries);
     }
     // What our own game changed.
     const changed = [];
@@ -137,8 +142,9 @@ export class RoomTiles {
 
   onTiles(msg) {
     const b = msg.b ?? msg.k;
-    if (b !== this.b) {
-      // Not there yet (still loading it): keep for when we are.
+    if (b !== this.b || place(this.ram)?.b !== b) {
+      // Not there yet (still loading it), or on the way out (the game may
+      // already hold the next area's map): keep for when we're there.
       if (this.pending?.b !== b) this.pending = { b, entries: [] };
       this.pending.entries.push(...msg.c);
       return;
@@ -188,6 +194,21 @@ export class RoomTiles {
     return -1;
   }
 
+  // Outdoors the screen's tilemap in VRAM holds only what's around the camera,
+  // and a tile far away would land on top of something on screen. Draw only
+  // what's in view: the game draws the rest from the new map16 tiles as it
+  // scrolls there. Returns a test of map16 index pos, or null to draw all.
+  viewOf(ram) {
+    const area = ram.get(0x8A);
+    if (area >= 0x80) return null;
+    const ox = (area & 7) << 9, oy = ((area & 0x3f) >> 3) << 9;
+    const cx = r16(ram, 0xE2) - ox, cy = r16(ram, 0xE8) - oy;
+    return (pos) => {
+      const x = (pos & 0x3f) << 4, y = (pos >> 6) << 4;
+      return x + 16 > cx - 16 && x < cx + 256 + 16 && y + 16 > cy - 16 && y < cy + 224 + 16;
+    };
+  }
+
   // Queue changed tiles for upload to VRAM, as the game does: entries of
   // (VRAM address big-endian, length, tiles), ended by $FF. Indoors one 8x8
   // tile per tilemap word (Dungeon_Store2x2); outdoors two rows of two 8x8
@@ -201,13 +222,16 @@ export class RoomTiles {
     const busy = ram.get(0x14);
     if (busy && busy !== 1) return;
     let p = UPLOAD + 2 + (busy ? r16(ram, UPLOAD) : 0);
+    const start = p;
     const put = (addr, bytes) => {
       ram.set(p, addr >> 8); ram.set(p + 1, addr & 0xff);
       ram.set(p + 2, 0x00); ram.set(p + 3, bytes - 1);
       p += 4;
     };
     const word = (v) => { ram.set(p, v & 0xff); ram.set(p + 1, (v >> 8) & 0xff); p += 2; };
+    const view = indoor ? null : this.viewOf(ram);
     for (const pos of this.redraw) {
+      if (view && !view(pos)) { this.redraw.delete(pos); continue; }
       if (p + (indoor ? 6 : 16) + 1 > UPLOAD_END) break;
       const tile = r16(ram, TILEMAP + pos * 2);
       if (indoor) {
@@ -219,6 +243,7 @@ export class RoomTiles {
       }
       this.redraw.delete(pos);
     }
+    if (p === start) return;
     ram.set(p, 0xff);
     const off = p - UPLOAD - 2;
     ram.set(UPLOAD, off & 0xff); ram.set(UPLOAD + 1, off >> 8);

@@ -67,6 +67,7 @@ test('a pot lifted in one game disappears in the others, also for latecomers', a
 function fakeOutdoors() {
   const g = fakeGame();
   g.mem[0x10] = 0x09; g.mem[0x1B] = 0; g.mem[0x8A] = 0x2C;
+  g.mem[0xE3] = 0x08; g.mem[0xE9] = 0x0A;         // camera at the area's top left (2048, 2560)
   g.mem[0x2000 + 0x105 * 2] = 0x36; g.mem[0x2000 + 0x105 * 2 + 1] = 0x00;   // bush
   g.map16 = (v) => [v * 4, v * 4 + 1, v * 4 + 2, v * 4 + 3];
   g.cutBush = () => { g.mem[0x2000 + 0x105 * 2] = 0xC7; g.mem[0x2000 + 0x105 * 2 + 1] = 0x0D; };   // 0xDC7
@@ -88,6 +89,12 @@ test('outdoors: a cut bush is redrawn from map16 and remembered', () => {
     (va + 0x20) >> 8, (va + 0x20) & 0xff, 0, 3, ...le(t0 + 2), ...le(t0 + 3), 0xff]);
   // In the game's list of changed tiles, to survive a trip indoors.
   assert.equal(g.mem[0x4AC], 2);
+  // A tile out of view changes in the map but isn't drawn: it would land on
+  // the screen's tilemap where something else shows.
+  g.mem[0x14] = 0; g.mem[0x1000] = 0;
+  t.apply([0x2000 + 0x7C0 * 2, 0xC7, 0x2000 + 0x7C0 * 2 + 1, 0x0D]);   // row 31, column 0
+  assert.equal(g.mem[0x2000 + 0x7C0 * 2 + 1], 0x0D);
+  assert.equal(g.mem[0x14], 0);
   assert.deepEqual([...g.mem.slice(0xF800, 0xF802)], [0x0a, 0x02]);
   assert.deepEqual([...g.mem.slice(0xFA00, 0xFA02)], [0xC7, 0x0D]);
 });
