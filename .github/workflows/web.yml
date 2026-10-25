@@ -5,7 +5,7 @@
 #   cloudflare  Cloudflare Workers. Needs secrets CLOUDFLARE_API_TOKEN and
 #               CLOUDFLARE_ACCOUNT_ID. Config: web/wrangler.toml.
 #   pages       GitHub Pages. Set Settings > Pages > Source to "GitHub Actions".
-#   (unset)     Build only.
+#   (unset)     GitHub Pages if the repo is public, otherwise build only.
 #
 # The site never contains a ROM or extracted assets: players load their own
 # ROM in the browser. The "Check no game data" step enforces that.
@@ -62,7 +62,7 @@ jobs:
           path: web/dist
           retention-days: 7
 
-      - if: vars.DEPLOY_TARGET == 'pages' && github.event_name != 'pull_request'
+      - if: (vars.DEPLOY_TARGET == 'pages' || (vars.DEPLOY_TARGET == '' && !github.event.repository.private)) && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
@@ -92,7 +92,7 @@ jobs:
           command: deploy
 
   deploy-pages:
-    if: vars.DEPLOY_TARGET == 'pages' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (vars.DEPLOY_TARGET == 'pages' || (vars.DEPLOY_TARGET == '' && !github.event.repository.private)) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -21,9 +21,9 @@ The repository variable `DEPLOY_TARGET` picks where:
   setup: create a Cloudflare API token with the "Edit Cloudflare Workers" template and add repo
   secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The multiplayer sync server can later
   become this Worker's script (a Durable Object per room) on the same origin.
-- `pages`: GitHub Pages (free only for public repos). Set Settings > Pages > Source to
-  "GitHub Actions". The site works under a subpath since every URL in it is relative.
-- unset: build only; the built site is kept as the `web-dist` run artifact for 7 days.
+- `pages`: GitHub Pages (free only for public repos), also the default when the variable is unset
+  and the repo is public. Set Settings > Pages > Source to "GitHub Actions". The site works under a subpath since every URL in it is relative.
+- unset on a private repo: build only; the built site is kept as the `web-dist` run artifact for 7 days.
 
 Deploy by hand with `cd web && npx wrangler@4 deploy` after `web/build.sh`.
 
