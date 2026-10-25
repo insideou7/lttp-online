@@ -50,4 +50,4 @@ No ROM or extracted asset is ever committed or downloaded by our scripts. See `r
 
 - A GUI SNES debugger (Mesen 2, bsnes-plus). They need a desktop; use them locally.
 - Futaba, the assembler jpdasm builds with (needed only to reassemble the disassembly).
-- Emscripten, for the WebAssembly build.
+- Emscripten, for the WebAssembly build. `web/build.sh` needs it; see `docs/web-client.md`.

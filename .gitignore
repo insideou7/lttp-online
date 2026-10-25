@@ -10,3 +10,6 @@ zelda3_assets.dat
 *.rep/
 *.lock
 work/
+# Web client build output
+web/.cache/
+web/dist/

@@ -1,0 +1,94 @@
+:root {
+  --bg: #0f1a14;
+  --card: #18271e;
+  --text: #e8efe9;
+  --muted: #9fb3a5;
+  --accent: #e0b84a;
+  --accent-text: #1d1606;
+  --error: #ff8a7a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 { margin: 0; font-size: 28px; color: var(--accent); }
+h2 { margin: 0 0 8px; font-size: 18px; }
+.sub, footer { color: var(--muted); }
+a { color: var(--accent); }
+code { background: #0003; padding: 1px 4px; border-radius: 4px; }
+
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+}
+
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.button:focus-visible, .link:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+.link {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  text-decoration: underline;
+  font: inherit;
+  cursor: pointer;
+  margin-left: 12px;
+}
+
+#status { min-height: 1.5em; margin: 12px 0 0; color: var(--muted); }
+#status.error { color: var(--error); }
+progress { width: 100%; }
+
+#game { margin: 20px 0; }
+/* SDL sets the canvas size in pixels; scale it to fit while keeping the SNES aspect ratio. */
+#canvas {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 8 / 7;  /* 256x224, the SNES picture */
+  max-height: 85vh;
+  background: #000;
+  image-rendering: pixelated;
+  border-radius: 8px;
+  outline: none;
+}
+#game:fullscreen { background: #000; display: flex; flex-direction: column; justify-content: center; margin: 0; }
+#game:fullscreen #canvas { width: auto !important; height: 100vh !important; max-height: none; margin: 0 auto; border-radius: 0; }
+#game:fullscreen .toolbar { display: none; }
+
+.toolbar { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: var(--muted); }
+.toolbar .link { margin-left: 0; }
+
+.help table { border-collapse: collapse; margin-bottom: 8px; }
+.help th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 12px 2px 0; }
+.help td { padding: 2px 24px 2px 0; }
+.help p { color: var(--muted); margin: 0; }
+
+@media (max-width: 520px) {
+  .help td { padding-right: 10px; }
+}

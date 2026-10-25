@@ -1,0 +1,337 @@
+diff --git a/src/main.c b/src/main.c
+index 2b42744..1c07381 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -4,6 +4,9 @@
+ #include <stdint.h>
+ #include <stdbool.h>
+ #include <SDL.h>
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++#endif
+ #ifdef _WIN32
+ #include "platform/win32/volume_control.h"
+ #include <direct.h>
+@@ -73,6 +76,10 @@ void NORETURN Die(const char *error) {
+   SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kWindowTitle, error, NULL);
+ #endif
+   fprintf(stderr, "Error: %s\n", error);
++#ifdef __EMSCRIPTEN__
++  EM_ASM({ if (Module.onFatalError) Module.onFatalError(UTF8ToString($0)); }, error);
++  emscripten_force_exit(1);
++#endif
+   exit(1);
+ }
+ 
+@@ -276,6 +283,157 @@ static const struct RendererFuncs kSdlRendererFuncs  = {
+ 
+ void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
+ 
++static SDL_AudioDeviceID g_audio_device;
++static uint32 g_last_tick, g_frame_ctr;
++static bool g_audio_paused = true;
++
++static bool PollEvents(void) {
++  bool running = true;
++  SDL_Event event;
++  while(SDL_PollEvent(&event)) {
++    switch(event.type) {
++    case SDL_CONTROLLERDEVICEADDED:
++      OpenOneGamepad(event.cdevice.which);
++      break;
++    case SDL_CONTROLLERAXISMOTION:
++      HandleGamepadAxisInput(event.caxis.which, event.caxis.axis, event.caxis.value);
++      break;
++    case SDL_CONTROLLERBUTTONDOWN:
++    case SDL_CONTROLLERBUTTONUP: {
++      int b = RemapSdlButton(event.cbutton.button);
++      if (b >= 0)
++        HandleGamepadInput(b, event.type == SDL_CONTROLLERBUTTONDOWN);
++      break;
++    }
++    case SDL_MOUSEWHEEL:
++      if (SDL_GetModState() & KMOD_CTRL && event.wheel.y != 0)
++        ChangeWindowScale(event.wheel.y > 0 ? 1 : -1);
++      break;
++    case SDL_MOUSEBUTTONDOWN:
++      if (event.button.button == SDL_BUTTON_LEFT && event.button.state == SDL_PRESSED && event.button.clicks == 2) {
++        if ((g_win_flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0 && (g_win_flags & SDL_WINDOW_FULLSCREEN) == 0 && SDL_GetModState() & KMOD_SHIFT) {
++          g_win_flags ^= SDL_WINDOW_BORDERLESS;
++          SDL_SetWindowBordered(g_window, (g_win_flags & SDL_WINDOW_BORDERLESS) == 0);
++        }
++      }
++      break;
++    case SDL_KEYDOWN:
++      HandleInput(event.key.keysym.sym, event.key.keysym.mod, true);
++      break;
++    case SDL_KEYUP:
++      HandleInput(event.key.keysym.sym, event.key.keysym.mod, false);
++      break;
++    case SDL_QUIT:
++      running = false;
++      break;
++    }
++  }
++  return running;
++}
++
++static void SyncAudioPause(void) {
++  if (g_paused != g_audio_paused) {
++    g_audio_paused = g_paused;
++    if (g_audio_device)
++      SDL_PauseAudioDevice(g_audio_device, g_audio_paused);
++  }
++}
++
++static bool RunEmulatedFrame(void) {
++  // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
++  int inputs = g_input1_state;
++  if (g_input1_state & 0xf0)
++    g_gamepad_buttons = 0;
++  inputs |= g_gamepad_buttons;
++
++  SDL_LockMutex(g_audio_mutex);
++  bool is_replay = ZeldaRunFrame(inputs);
++  SDL_UnlockMutex(g_audio_mutex);
++  g_frame_ctr++;
++  return is_replay;
++}
++
++static bool RunOneIteration(void) {
++  if (!PollEvents())
++    return false;
++  SyncAudioPause();
++
++  if (g_paused) {
++    SDL_Delay(16);
++    return true;
++  }
++
++  bool is_replay = RunEmulatedFrame();
++
++  if ((g_turbo ^ (is_replay & g_replay_turbo)) && (g_frame_ctr & (g_turbo ? 0xf : 0x7f)) != 0) {
++    return true;
++  }
++
++  DrawPpuFrameWithPerf();
++
++  if (g_config.display_perf_title) {
++    char title[60];
++    snprintf(title, sizeof(title), "%s | FPS: %d", kWindowTitle, g_curr_fps);
++    SDL_SetWindowTitle(g_window, title);
++  }
++
++  // if vsync isn't working, delay manually
++  uint32 curTick = SDL_GetTicks();
++
++  if (!g_config.disable_frame_delay) {
++    static const uint8 delays[3] = { 17, 17, 16 }; // 60 fps
++    g_last_tick += delays[g_frame_ctr % 3];
++
++    if (g_last_tick > curTick) {
++      uint32 delta = g_last_tick - curTick;
++      if (delta > 500) {
++        g_last_tick = curTick - 500;
++        delta = 500;
++      }
++//      printf("Sleeping %d\n", delta);
++      SDL_Delay(delta);
++    } else if (curTick - g_last_tick > 500) {
++      g_last_tick = curTick;
++    }
++  }
++  return true;
++}
++
++#ifdef __EMSCRIPTEN__
++// Called once per browser animation frame (usually 60 Hz, but can be 120+ Hz).
++// Runs as many 60 Hz game frames as real time has passed, then draws once.
++static void WebMainLoop(void) {
++  static double next_frame_time;
++  if (!PollEvents()) {
++    emscripten_cancel_main_loop();
++    return;
++  }
++  SyncAudioPause();
++  double now = emscripten_get_now();
++  if (g_paused) {
++    next_frame_time = now;
++    return;
++  }
++  const double kFrameMs = 1000.0 / 60.0;
++  if (next_frame_time == 0 || now - next_frame_time > 250)
++    next_frame_time = now;  // first frame, or the tab was in the background
++  int frames = 0;
++  if (g_turbo) {
++    for (; frames < 8; frames++)
++      RunEmulatedFrame();
++    next_frame_time = now + kFrameMs;
++  } else {
++    while (now >= next_frame_time && frames < 4) {
++      RunEmulatedFrame();
++      next_frame_time += kFrameMs;
++      frames++;
++    }
++  }
++  if (frames)
++    DrawPpuFrameWithPerf();
++}
++#endif
++
+ #undef main
+ int main(int argc, char** argv) {
+   argc--, argv++;
+@@ -390,111 +548,19 @@ int main(int argc, char** argv) {
+   for (int i = 0; i < SDL_NumJoysticks(); i++)
+     OpenOneGamepad(i);
+ 
+-  bool running = true;
+-  SDL_Event event;
+-  uint32 lastTick = SDL_GetTicks();
+-  uint32 curTick = 0;
+-  uint32 frameCtr = 0;
+-  bool audiopaused = true;
++  g_audio_device = device;
++  g_last_tick = SDL_GetTicks();
+ 
+   if (g_config.autosave)
+     HandleCommand(kKeys_Load + 0, true);
+ 
+-  while(running) {
+-    while(SDL_PollEvent(&event)) {
+-      switch(event.type) {
+-      case SDL_CONTROLLERDEVICEADDED:
+-        OpenOneGamepad(event.cdevice.which);
+-        break;
+-      case SDL_CONTROLLERAXISMOTION:
+-        HandleGamepadAxisInput(event.caxis.which, event.caxis.axis, event.caxis.value);
+-        break;
+-      case SDL_CONTROLLERBUTTONDOWN:
+-      case SDL_CONTROLLERBUTTONUP: {
+-        int b = RemapSdlButton(event.cbutton.button);
+-        if (b >= 0)
+-          HandleGamepadInput(b, event.type == SDL_CONTROLLERBUTTONDOWN);
+-        break;
+-      }
+-      case SDL_MOUSEWHEEL:
+-        if (SDL_GetModState() & KMOD_CTRL && event.wheel.y != 0)
+-          ChangeWindowScale(event.wheel.y > 0 ? 1 : -1);
+-        break;
+-      case SDL_MOUSEBUTTONDOWN:
+-        if (event.button.button == SDL_BUTTON_LEFT && event.button.state == SDL_PRESSED && event.button.clicks == 2) {
+-          if ((g_win_flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0 && (g_win_flags & SDL_WINDOW_FULLSCREEN) == 0 && SDL_GetModState() & KMOD_SHIFT) {
+-            g_win_flags ^= SDL_WINDOW_BORDERLESS;
+-            SDL_SetWindowBordered(g_window, (g_win_flags & SDL_WINDOW_BORDERLESS) == 0);
+-          }
+-        }
+-        break;
+-      case SDL_KEYDOWN:
+-        HandleInput(event.key.keysym.sym, event.key.keysym.mod, true);
+-        break;
+-      case SDL_KEYUP:
+-        HandleInput(event.key.keysym.sym, event.key.keysym.mod, false);
+-        break;
+-      case SDL_QUIT:
+-        running = false;
+-        break;
+-      }
+-    }
+-
+-    if (g_paused != audiopaused) {
+-      audiopaused = g_paused;
+-      if (device)
+-        SDL_PauseAudioDevice(device, audiopaused);
+-    }
+-
+-    if (g_paused) {
+-      SDL_Delay(16);
+-      continue;
+-    }
+-
+-    // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
+-    int inputs = g_input1_state;
+-    if (g_input1_state & 0xf0)
+-      g_gamepad_buttons = 0;
+-    inputs |= g_gamepad_buttons;
+-
+-    SDL_LockMutex(g_audio_mutex);
+-    bool is_replay = ZeldaRunFrame(inputs);
+-    SDL_UnlockMutex(g_audio_mutex);
+-
+-    frameCtr++;
+-
+-    if ((g_turbo ^ (is_replay & g_replay_turbo)) && (frameCtr & (g_turbo ? 0xf : 0x7f)) != 0) {
+-      continue;
+-    }
+-
+-    DrawPpuFrameWithPerf();
+-
+-    if (g_config.display_perf_title) {
+-      char title[60];
+-      snprintf(title, sizeof(title), "%s | FPS: %d", kWindowTitle, g_curr_fps);
+-      SDL_SetWindowTitle(g_window, title);
+-    }
+-
+-    // if vsync isn't working, delay manually
+-    curTick = SDL_GetTicks();
+-
+-    if (!g_config.disable_frame_delay) {
+-      static const uint8 delays[3] = { 17, 17, 16 }; // 60 fps
+-      lastTick += delays[frameCtr % 3];
+-
+-      if (lastTick > curTick) {
+-        uint32 delta = lastTick - curTick;
+-        if (delta > 500) {
+-          lastTick = curTick - 500;
+-          delta = 500;
+-        }
+-//        printf("Sleeping %d\n", delta);
+-        SDL_Delay(delta);
+-      } else if (curTick - lastTick > 500) {
+-        lastTick = curTick;
+-      }
+-    }
+-  }
++#ifdef __EMSCRIPTEN__
++  // The browser owns the main loop: run one batch of frames per animation frame.
++  emscripten_set_main_loop(WebMainLoop, 0, 1);
++  return 0;
++#else
++  while (RunOneIteration()) {}
++#endif
+   if (g_config.autosave)
+     HandleCommand(kKeys_Save + 0, true);
+ 
+diff --git a/src/zelda_rtl.c b/src/zelda_rtl.c
+index ea6dec5..39310cc 100644
+--- a/src/zelda_rtl.c
++++ b/src/zelda_rtl.c
+@@ -1,4 +1,11 @@
+ #include "zelda_rtl.h"
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++// Lets the web page persist the saves folder (IndexedDB) after the game writes to it.
++#define NOTIFY_SAVES_CHANGED() EM_ASM({ if (Module.onSavesChanged) Module.onSavesChanged(); })
++#else
++#define NOTIFY_SAVES_CHANGED()
++#endif
+ #include "variables.h"
+ #include "misc.h"
+ #include "nmi.h"
+@@ -811,6 +818,8 @@ void SaveLoadSlot(int cmd, int which) {
+       StateRecorder_Save(&state_recorder, f);
+ 
+     fclose(f);
++    if (cmd == kSaveLoad_Save)
++      NOTIFY_SAVES_CHANGED();
+   }
+ }
+ 
+@@ -884,6 +893,7 @@ void ZeldaWriteSram() {
+   if (f) {
+     fwrite(g_zenv.sram, 1, 8192, f);
+     fclose(f);
++    NOTIFY_SAVES_CHANGED();
+   } else {
+     fprintf(stderr, "Unable to write saves/sram.dat\n");
+   }
