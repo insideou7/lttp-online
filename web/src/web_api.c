@@ -7,6 +7,7 @@
 #include "src/zelda_rtl.h"
 #include "src/hud.h"
 #include "src/load_gfx.h"
+#include "snes/ppu.h"
 
 // Work RAM ($7E0000-$7FFFFF), 128 KiB. The save file being played lives at
 // $7EF000-$7EF4FF (items at $7EF340+, hearts at $7EF36C, etc.).
@@ -15,6 +16,17 @@ EMSCRIPTEN_KEEPALIVE int web_ram_size(void) { return sizeof(g_ram); }
 
 // Battery-backed SRAM (8 KiB): the three save slots on the file select screen.
 EMSCRIPTEN_KEEPALIVE uint8 *web_sram(void) { return g_zenv.sram; }
+
+// Video memory, for drawing other players' Link (web/site/sync/presence.js):
+// VRAM (64 KiB, 16-bit words), CGRAM (256 15-bit colors), and where sprite
+// tiles live (OBSEL): web_obj_info() = table 1 word address | table 2 << 16,
+// and web_obj_size() = the OBSEL size setting (0 = 8x8 and 16x16 in this game).
+EMSCRIPTEN_KEEPALIVE uint16 *web_vram(void) { return g_zenv.ppu->vram; }
+EMSCRIPTEN_KEEPALIVE uint16 *web_cgram(void) { return g_zenv.ppu->cgram; }
+EMSCRIPTEN_KEEPALIVE uint32 web_obj_info(void) {
+  return g_zenv.ppu->objTileAdr1 | (uint32)g_zenv.ppu->objTileAdr2 << 16;
+}
+EMSCRIPTEN_KEEPALIVE int web_obj_size(void) { return g_zenv.ppu->objSize; }
 
 // Redraw after multiplayer sync wrote another player's unlock into the save
 // area. mask: 1 HUD and equipped item, 2 sword, 4 shield, 8 armor and gloves.

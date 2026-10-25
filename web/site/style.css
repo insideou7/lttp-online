@@ -119,3 +119,5 @@ input {
 @media (max-width: 520px) {
   .help td { padding-right: 10px; }
 }
+/* Other players' Links, drawn over the game (ghosts.js). */
+canvas.ghosts { position: absolute; pointer-events: none; image-rendering: pixelated; }

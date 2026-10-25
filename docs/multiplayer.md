@@ -23,6 +23,8 @@ the game in their browser and goes wherever they like; a small server relays onl
 3. The first player to reach gameplay seeds the room with their save's progress. Players who join
    later get the room's progress merged into their file (anything extra they had is shared too).
    When someone gets an item, the others see "*Name* got *item*" and have it right away.
+4. When another player is on the same screen as you, you see their Link (slightly see-through,
+   with their name above). They're ghosts: you can't bump into or hurt each other.
 
 No accounts: a room is just its code. The server keeps a room's progress in memory for 12 hours
 after the last player leaves. In-game saves keep everything as usual, in each player's browser.
@@ -76,13 +78,26 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   flags from the copy it loaded, which can predate another player's chest).
 - `web/site/sync/room.js`: the server-side room, with no transport: messages in, messages out.
   `server/index.js` wraps it in WebSockets; `server/cloudflare/worker.js` wraps it in a Durable Object.
+- `web/site/sync/presence.js`: seeing each other. 15 times a second, while Link is on screen,
+  the client reads where he is (`$20`/`$22`, which map: indoors, light/dark world or a special
+  area) and draws his 12 OAM slots (body, sword, shield, shadow...) from VRAM and CGRAM into one
+  small image, a "pose". It sends `{ t: 'pos', p: { l, x, y, f } }` only when something changed;
+  `f` is the pose's id and the image itself goes along only the first time (about 1 KB), so a
+  walk cycle costs a few bytes per update after the first steps. When someone joins, everyone
+  sends their position and poses again. The server relays positions and keeps none.
+  `web/site/ghosts.js` draws the others on a canvas over the game, at their position minus your
+  camera (`$E2`/`$E8`), gliding between updates and dimmed with the screen fades.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
   redraw the HUD, sword, shield and armor after a remote change. An SNES emulator backend for
   randomizer ROMs can implement the same interface over its WRAM, since randomizers keep vanilla's
-  item layout.
+  item layout. To show your Link to others a backend also provides `video` (VRAM, CGRAM and the
+  sprite tile base); zelda3 exports them from `web_api.c`, and an emulator core has them anyway.
 
 ## Known limits
+
+- Other players are drawn over everything, including the HUD and things they'd walk behind
+  (doorways, tree tops). The people and enemies they carry or fight aren't shown, only their Link.
 
 - If two players are in the same dungeon room when one opens a chest, the other's game still shows
   it closed until they leave the room, and could open it again.

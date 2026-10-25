@@ -2,6 +2,7 @@
 import { SyncClient, resolveSyncUrl } from './sync/client.js';
 import { zelda3Backend } from './sync/zelda3-backend.js';
 import { isRoomCode, newRoomCode } from './sync/room.js';
+import { startGhosts } from './ghosts.js';
 
 const US_ROM_SHA1 = '6d4f10a8b10e10dbe624cb23cf03b88bb8252973';
 const GAME_DIR = '/zelda3';
@@ -210,11 +211,12 @@ function startSync(game) {
   const statusEl = $('mp-status');
   const label = { connecting: 'connecting…', reconnecting: 'reconnecting…', connected: '',
     unreachable: "can't reach the sync server, playing solo for now", error: 'sync error' };
+  const backend = zelda3Backend(game);
   const sync = new SyncClient({
     url: resolveSyncUrl(buildInfo),
     room: roomCode,
     name: $('mp-name').value.trim() || 'Link',
-    backend: zelda3Backend(game),
+    backend,
     onStatus: ({ state, detail, players, you }) => {
       let text = `Room ${roomCode}: ` + (label[state] ?? state);
       if (state === 'connected') {
@@ -226,6 +228,7 @@ function startSync(game) {
     onNotice: ({ name, what }) => showNotice(`<b>${escapeHtml(name)}</b> ${escapeHtml(what)}`),
   });
   sync.start();
+  startGhosts({ gameCanvas: $('canvas'), sync, backend });
   window.lttpSync = sync;  // for debugging
 }
 

@@ -8,15 +8,18 @@
 //     { t: 'sync', state }                 player is in game with this save;
 //                                          seeds the room if it has no state yet
 //     { t: 'ops', ops: [...] }             player's own new unlocks (see fields.js)
+//     { t: 'pos', p }                      where this player's Link is (presence.js),
+//                                          p = { l, x, y, f, img? } or null; v2+
 //   server -> client
 //     { t: 'welcome', you, players }       reply to hello
 //     { t: 'players', players }            someone joined or left
 //     { t: 'synced', state, seeded }       reply to sync: the room's progress
 //     { t: 'ops', from, ops }              another player's unlocks
+//     { t: 'pos', from, p }                another player's position
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 const MAX_PLAYERS = 8;
 const MAX_NAME = 24;
 
@@ -82,6 +85,12 @@ export class Room {
         if (!ops.length) return [];
         return [{ to: 'others', from: id, msg: { t: 'ops', from: id, ops } }];
       }
+      case 'pos': {
+        // Relayed only, never stored: senders repeat theirs when someone joins.
+        const p = cleanPos(msg.p);
+        if (p === undefined) return err('bad pos');
+        return [{ to: 'others', from: id, msg: { t: 'pos', from: id, p } }];
+      }
     }
     return err('unknown message type');
   }
@@ -101,6 +110,25 @@ function cleanState(s) {
     } else {
       out[f.key] = Number.isInteger(v) ? Math.max(0, Math.min(f.max ?? 255, v)) : emptyValue(f);
     }
+  }
+  return out;
+}
+
+// A position in the shape presence.js sends, or undefined if it isn't one.
+const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+function cleanPos(p) {
+  if (p === null) return null;
+  if (!p || typeof p !== 'object') return undefined;
+  if (typeof p.l !== 'string' || !/^[a-z0-9]{1,4}$/.test(p.l)) return undefined;
+  if (!int(p.x, 0, 0xffff) || !int(p.y, 0, 0xffff)) return undefined;
+  if (typeof p.f !== 'string' || !/^[a-z0-9]{1,8}$/.test(p.f)) return undefined;
+  const out = { l: p.l, x: p.x, y: p.y, f: p.f };
+  if (p.img !== undefined) {
+    const i = p.img;
+    if (!i || !int(i.ox, -64, 64) || !int(i.oy, -64, 64) || !int(i.w, 1, 64) || !int(i.h, 1, 64)) return undefined;
+    if (!Array.isArray(i.c) || i.c.length > 255 || !i.c.every((c) => int(c, 0, 0x7fff))) return undefined;
+    if (typeof i.p !== 'string' || i.p.length !== Math.ceil((i.w * i.h) / 3) * 4 || !/^[A-Za-z0-9+/]*=*$/.test(i.p)) return undefined;
+    out.img = { ox: i.ox, oy: i.oy, w: i.w, h: i.h, c: i.c.slice(), p: i.p };
   }
   return out;
 }
