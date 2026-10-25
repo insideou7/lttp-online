@@ -10,16 +10,24 @@
 //     { t: 'ops', ops: [...] }             player's own new unlocks (see fields.js)
 //     { t: 'pos', p }                      where this player's Link is (presence.js),
 //                                          p = { l, x, y, f, img? } or null; v2+
+//     { t: 'at', k }                       which room/area this player's enemies
+//                                          belong to (mobs.js), or null; v3+
+//     { t: 'mobs', k, d }                  owner of k: its enemies (base64 bytes)
+//     { t: 'hit', k, s, d }                non-owner: it hit enemy slot s (bytes)
 //   server -> client
 //     { t: 'welcome', you, players }       reply to hello
 //     { t: 'players', players }            someone joined or left
 //     { t: 'synced', state, seeded }       reply to sync: the room's progress
 //     { t: 'ops', from, ops }              another player's unlocks
 //     { t: 'pos', from, p }                another player's position
+//     { t: 'owner', k, id, n }             id runs the enemies at k; n players are there
+//     { t: 'mobs', from, k, d }            the enemies at k, from their owner
+//     { t: 'hit', from, k, s, d }          to the owner: another player hit slot s
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
+const MAX_MOBS_B64 = 4096;
 const MAX_PLAYERS = 8;
 const MAX_NAME = 24;
 
@@ -27,7 +35,8 @@ export class Room {
   constructor(code, saved = null) {
     this.code = code;
     this.state = saved?.state ?? null;   // null until the first player syncs
-    this.players = new Map();             // id -> { name }
+    this.players = new Map();             // id -> { name, at }
+    this.owners = new Map();              // enemy area key -> player id running them
     this.nextId = 1;
   }
 
@@ -44,8 +53,44 @@ export class Room {
   }
 
   disconnect(id) {
-    if (!this.players.delete(id)) return [];
-    return [{ to: 'all', msg: { t: 'players', players: this.playerList() } }];
+    const p = this.players.get(id);
+    if (!p) return [];
+    const out = this.moveTo(id, null);
+    this.players.delete(id);
+    return [...out, { to: 'all', msg: { t: 'players', players: this.playerList() } }];
+  }
+
+  // Enemies: in each area (a dungeon room or overworld screen, see mobs.js) one
+  // player, the first to arrive, runs the enemies and the others copy them.
+  // When the owner leaves, the longest-present player still there takes over.
+  playersAt(k) {
+    return [...this.players].filter(([, p]) => p.at === k).map(([id]) => id);
+  }
+
+  moveTo(id, k) {
+    const p = this.players.get(id);
+    const old = p.at ?? null;
+    if (old === k) return [];
+    p.at = k;
+    const out = [];
+    if (old !== null) {
+      const left = this.playersAt(old);
+      if (this.owners.get(old) === id) {
+        if (left.length) this.owners.set(old, left[0]); else this.owners.delete(old);
+      }
+      out.push(...this.ownerNotice(old));
+    }
+    if (k !== null) {
+      if (!this.owners.has(k)) this.owners.set(k, id);
+      out.push(...this.ownerNotice(k));
+    }
+    return out;
+  }
+
+  ownerNotice(k) {
+    const ids = this.playersAt(k);
+    const msg = { t: 'owner', k, id: this.owners.get(k) ?? null, n: ids.length };
+    return ids.map((to) => ({ to, msg }));
   }
 
   playerList() {
@@ -91,6 +136,25 @@ export class Room {
         if (p === undefined) return err('bad pos');
         return [{ to: 'others', from: id, msg: { t: 'pos', from: id, p } }];
       }
+      case 'at': {
+        const k = msg.k === null ? null : areaKey(msg.k);
+        if (k === undefined) return err('bad area');
+        return this.moveTo(id, k);
+      }
+      case 'mobs': {
+        // Only the owner's copy counts; anything else is stale.
+        const k = areaKey(msg.k);
+        if (k === undefined || this.owners.get(k) !== id || !isB64(msg.d)) return [];
+        return this.playersAt(k).filter((to) => to !== id)
+          .map((to) => ({ to, msg: { t: 'mobs', from: id, k, d: msg.d } }));
+      }
+      case 'hit': {
+        const k = areaKey(msg.k);
+        const owner = this.owners.get(k);
+        if (k === undefined || owner === undefined || owner === id || this.players.get(id).at !== k) return [];
+        if (!int(msg.s, 0, 15) || !isB64(msg.d)) return err('bad hit');
+        return [{ to: owner, msg: { t: 'hit', from: id, k, s: msg.s, d: msg.d } }];
+      }
     }
     return err('unknown message type');
   }
@@ -113,6 +177,9 @@ function cleanState(s) {
   }
   return out;
 }
+
+const areaKey = (k) => (typeof k === 'string' && /^[a-z0-9]{1,8}$/.test(k) ? k : undefined);
+const isB64 = (d) => typeof d === 'string' && d.length <= MAX_MOBS_B64 && /^[A-Za-z0-9+/]*=*$/.test(d);
 
 // A position in the shape presence.js sends, or undefined if it isn't one.
 const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;

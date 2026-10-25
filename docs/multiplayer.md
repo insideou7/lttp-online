@@ -25,6 +25,9 @@ the game in their browser and goes wherever they like; a small server relays onl
    When someone gets an item, the others see "*Name* got *item*" and have it right away.
 4. When another player is on the same screen as you, you see their Link (slightly see-through,
    with their name above). They're ghosts: you can't bump into or hurt each other.
+5. Enemies are shared too: players in the same room or area see the same monsters, and anyone's
+   hit counts. The first player to arrive hosts that room's enemies; when they leave, the next
+   player there takes over.
 
 No accounts: a room is just its code. The server keeps a room's progress in memory for 12 hours
 after the last player leaves. In-game saves keep everything as usual, in each player's browser.
@@ -87,6 +90,15 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   sends their position and poses again. The server relays positions and keeps none.
   `web/site/ghosts.js` draws the others on a canvas over the game, at their position minus your
   camera (`$E2`/`$E8`), gliding between updates and dimmed with the screen fades.
+- `web/site/sync/mobs.js`: shared enemies. Each player tells the server which enemy area they're
+  in (`{ t: 'at', k }`: a dungeon room, or a 512x512 block of an overworld area); the server makes
+  the first one there its owner. 15 times a second the owner sends its 16 sprite slots and 8
+  overlords (about 900 bytes of WRAM from $0B00-$0FFF and $7FF9C2-$7FFA5B) to the others there,
+  who write them into their game between frames. A non-owner's game still runs between copies,
+  so when it damages, stuns or kills an enemy or picks up a drop, the client sends that slot to
+  the owner (`hit`), whose game takes it over, and keeps its own copy for 0.4 s so the hit
+  doesn't flicker back. Enemies only chase and attack the owner's Link between copies, though
+  they still hurt anyone who touches them.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
   redraw the HUD, sword, shield and armor after a remote change. An SNES emulator backend for
@@ -95,6 +107,11 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   sprite tile base); zelda3 exports them from `web_api.c`, and an emulator core has them anyway.
 
 ## Known limits
+
+- Shared enemies: an enemy right at the edge of your screen can flicker when the room's host is
+  some distance away, because your game stops running enemies it thinks are off screen. Bosses
+  keep extra state outside the sprite tables and may act oddly for non-hosts. Items an enemy
+  drops are the host's roll. Pots, bushes, blocks and switches aren't shared yet.
 
 - Other players are drawn over everything, including the HUD and things they'd walk behind
   (doorways, tree tops). The people and enemies they carry or fight aren't shown, only their Link.
