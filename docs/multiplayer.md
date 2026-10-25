@@ -28,10 +28,11 @@ the game in their browser and goes wherever they like; a small server relays onl
 5. Enemies are shared too: players in the same room or area see the same monsters, and anyone's
    hit counts. The first player to arrive hosts that room's enemies; when they leave, the next
    player there takes over.
-6. Indoors (dungeons, houses, caves), the room itself is shared: a pot one player lifts is gone
+6. The place itself is shared. Indoors (dungeons, houses, caves): a pot one player lifts is gone
    for everyone (and its hidden item can only be taken once), and switches, pegs, unlocked
-   doors and lit torches change for everyone in the room. Anyone who walks in later sees the room
-   as it is.
+   doors and lit torches change for everyone in the room. Outdoors: cut or lifted bushes, lifted
+   rocks and signs, dug holes, bombed walls and hammered pegs. Anyone who arrives later sees the
+   place as it is.
 
 No accounts: a room is just its code. The server keeps a room's progress in memory for 12 hours
 after the last player leaves. In-game saves keep everything as usual, in each player's browser.
@@ -103,19 +104,24 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   the owner (`hit`), whose game takes it over, and keeps its own copy for 0.4 s so the hit
   doesn't flicker back. Enemies only chase and attack the owner's Link between copies, though
   they still hurt anyone who touches them.
-- `web/site/sync/tiles.js`: shared room objects indoors. Each client in a dungeon room watches the
-  room's tilemaps ($7E2000-$7E5FFF), collision map ($7F2000-$7F3FFF), crystal switch state
-  ($7EC172) and taken pot items ($7EF580). Bytes its own game changes go to the others in the room
-  (`tiles`), who write them and queue the redraw in the game's own VRAM upload list ($7E1000,
-  flag $7E0014), the way `Dungeon_Store2x2` does. The room's enemy host also sends every change
-  since it arrived to each newcomer. Items that pop out of a pot or bush a non-host lifted, and
-  pots they throw, are handed to the host as new sprites (`hit` with `n`), so they don't vanish.
+- `web/site/sync/tiles.js`: shared surroundings. Indoors each client watches the room's tilemaps
+  ($7E2000-$7E5FFF), collision map ($7F2000-$7F3FFF), crystal switch state ($7EC172) and taken pot
+  items ($7EF580); outdoors, the area's map16 tiles ($7E2000-$7E3FFF, collision comes from them).
+  Bytes its own game changes go to the others there (`tiles`), who write them and queue the redraw
+  in the game's own VRAM upload list ($7E1000, flag $7E0014), the way `Dungeon_Store2x2` and
+  `Overworld_DrawMap16` do. Outdoor redraws need the ROM's map16-to-8x8 table (`backend.map16`),
+  and outdoor changes also go into the game's list of changed tiles ($7EF800, $7E04AC) so they
+  survive a trip indoors. The area's enemy host also sends every change since it arrived to each
+  newcomer. Items that pop out of a pot or bush a non-host lifted, and things they throw, are
+  handed to the host as new sprites (`hit` with `n`), so they don't vanish.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
   redraw the HUD, sword, shield and armor after a remote change. An SNES emulator backend for
   randomizer ROMs can implement the same interface over its WRAM, since randomizers keep vanilla's
   item layout. To show your Link to others a backend also provides `video` (VRAM, CGRAM and the
   sprite tile base); zelda3 exports them from `web_api.c`, and an emulator core has them anyway.
+  For outdoor tile redraws it provides `map16(v)`, the four 8x8 tile words of map16 tile `v`
+  (zelda3: `web_map16_table()`; on a ROM it's the game's map16-to-map8 table).
 
 ## Known limits
 
@@ -123,8 +129,9 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   some distance away, because your game stops running enemies it thinks are off screen. Bosses
   keep extra state outside the sprite tables and may act oddly for non-hosts. Items an enemy
   drops are the host's roll.
-- Shared rooms are indoors only: on the overworld, bushes and rocks one player lifts stay for the
-  others. Pushed blocks go through the same tile changes but haven't been tried with two players.
+- Pushed blocks go through the same tile changes but haven't been tried with two players.
+- Overworld changes are shared while players are in the same 512x512 block of an area; someone
+  in another block of a big area catches up when they walk into the host's block.
   Another player carrying a pot isn't shown.
 
 - Other players are drawn over everything, including the HUD and things they'd walk behind

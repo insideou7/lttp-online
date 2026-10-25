@@ -15,8 +15,8 @@
 //     { t: 'mobs', k, d }                  owner of k: its enemies (base64 bytes)
 //     { t: 'hit', k, s, d, n? }            non-owner: it hit enemy slot s (bytes),
 //                                          or made a new sprite there (n)
-//     { t: 'tiles', k, c, f? }             room objects changed (tiles.js): pairs of
-//                                          RAM address and byte; f = everything so far
+//     { t: 'tiles', k, b, c, f? }          surroundings changed (tiles.js) at place b:
+//                                          pairs of RAM address and byte; f = all so far
 //   server -> client
 //     { t: 'welcome', you, players }       reply to hello
 //     { t: 'players', players }            someone joined or left
@@ -26,7 +26,7 @@
 //     { t: 'owner', k, id, n }             id runs the enemies at k; n players are there
 //     { t: 'mobs', from, k, d }            the enemies at k, from their owner
 //     { t: 'hit', from, k, s, d }          to the owner: another player hit slot s
-//     { t: 'tiles', from, k, c, f? }       room objects another player changed
+//     { t: 'tiles', from, k, b, c, f? }    surroundings another player changed
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
@@ -156,11 +156,12 @@ export class Room {
       case 'tiles': {
         const k = areaKey(msg.k);
         const c = msg.c;
-        if (k === undefined || this.players.get(id).at !== k) return [];
+        const b = msg.b === undefined ? k : areaKey(msg.b);
+        if (k === undefined || b === undefined || this.players.get(id).at !== k) return [];
         if (!Array.isArray(c) || c.length % 2 || c.length > MAX_TILE_PAIRS * 2 ||
             !c.every((v, i) => int(v, 0, i % 2 ? 0xff : 0x1ffff))) return err('bad tiles');
         return this.playersAt(k).filter((to) => to !== id)
-          .map((to) => ({ to, msg: { t: 'tiles', from: id, k, c, ...(msg.f ? { f: 1 } : {}) } }));
+          .map((to) => ({ to, msg: { t: 'tiles', from: id, k, b, c, ...(msg.f ? { f: 1 } : {}) } }));
       }
       case 'hit': {
         const k = areaKey(msg.k);

@@ -31,6 +31,10 @@ export function zelda3Backend(game) {
   return {
     ram,
     video: game._web_vram ? video : undefined,
+    // The four 8x8 tile words of overworld map16 tile v (tiles.js).
+    map16: game._web_map16_table
+      ? (v) => [0, 1, 2, 3].map((i) => u16(game._web_map16_table(), v * 4 + i))
+      : undefined,
     inGame: () => IN_GAME_MODULES.has(ram.get(0x10)),
     // Redraw only in plain dungeon/overworld play (no menu, dialog or
     // transition running), so it never interrupts the game's own drawing.
