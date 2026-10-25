@@ -58,6 +58,10 @@ game module, for example. These are the hooks for multiplayer sync (below).
 
 The desktop OpenGL output is not built; the web config forces `OutputMethod = SDL`. The page's
 `zelda3.ini` is upstream's with `WindowScale = 3`, `AudioSamples = 1024` and autosave off.
+Keyboard controls come from `web/keymap.ini` (WASD to move, F/G = Select/Start, J/M = A/B,
+I/L = X/Y, Q/E = L/R; arrows, Enter and Right Shift still work). `build.sh` drops upstream's
+`[KeyMap]` entries with the same names and appends that file, which also unbinds zelda3's
+single-letter cheat and debug keys. To remap, edit that file and the table in `web/site/index.html`.
 
 ## Updating zelda3
 

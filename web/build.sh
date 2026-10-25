@@ -114,7 +114,14 @@ sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
     -e 's/^WindowScale = .*/WindowScale = 3/' \
     -e 's/^AudioSamples = .*/AudioSamples = 1024/' \
     -e 's/^Autosave = .*/Autosave = 0/' \
-    "$SRC/zelda3.ini" > "$DIST/zelda3.ini"
+    "$SRC/zelda3.ini" |
+  # Our keyboard layout (web/keymap.ini) replaces upstream's [KeyMap] entries of the same name
+  awk 'NR == FNR { if ($0 ~ /^[A-Za-z]+ *=/) { k = $0; sub(/ *=.*/, "", k); mine[tolower(k)] = 1 } next }
+       /^\[/ { sec = tolower($0); sub(/\r$/, "", sec) }
+       sec == "[keymap]" && /^[A-Za-z]+ *=/ { k = $0; sub(/ *=.*/, "", k); if (tolower(k) in mine) next }
+       { print }' "$WEB/keymap.ini" - > "$DIST/zelda3.ini"
+printf '\n' >> "$DIST/zelda3.ini"
+cat "$WEB/keymap.ini" >> "$DIST/zelda3.ini"
 printf '{"zelda3": "%s"}\n' "$ZELDA3_COMMIT" > "$DIST/build.json"
 cp "$SRC/LICENSE.txt" "$DIST/ZELDA3_LICENSE.txt"
 echo "Built $DIST. Serve it with: python3 -m http.server -d $DIST 8080"
