@@ -122,6 +122,9 @@ sed -e 's/^OutputMethod = .*/OutputMethod = SDL/' \
        { print }' "$WEB/keymap.ini" - > "$DIST/zelda3.ini"
 printf '\n' >> "$DIST/zelda3.ini"
 cat "$WEB/keymap.ini" >> "$DIST/zelda3.ini"
-printf '{"zelda3": "%s"}\n' "$ZELDA3_COMMIT" > "$DIST/build.json"
+# Build id = hash of the files the page loads; app.js adds it as ?v= to bust stale caches
+BUILD_ID=$(cd "$DIST" && cat zelda3.js zelda3.wasm zelda3.ini app.js extract-worker.js style.css | sha256sum | cut -c1-12)
+sed -i -e "s/\"app.js\"/\"app.js?v=$BUILD_ID\"/" -e "s/\"style.css\"/\"style.css?v=$BUILD_ID\"/" "$DIST/index.html"
+printf '{"zelda3": "%s", "build": "%s"}\n' "$ZELDA3_COMMIT" "$BUILD_ID" > "$DIST/build.json"
 cp "$SRC/LICENSE.txt" "$DIST/ZELDA3_LICENSE.txt"
 echo "Built $DIST. Serve it with: python3 -m http.server -d $DIST 8080"
