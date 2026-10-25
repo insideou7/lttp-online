@@ -1,0 +1,9 @@
+# Cloudflare Workers deploy of the browser client (static files only for now).
+# The GitHub Action in .github/workflows/web.yml runs `wrangler deploy` here
+# after web/build.sh. The multiplayer sync server can be added later as this
+# Worker's `main` script, on the same origin.
+name = "lttp-online"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist"

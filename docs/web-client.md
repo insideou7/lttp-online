@@ -10,6 +10,23 @@ python3 -m http.server -d web/dist 8080         # then open http://localhost:808
 
 `web/dist/` is a static site (about 17 MB). Any static host works; it needs no special headers.
 
+## Hosting
+
+`.github/workflows/web.yml` builds the site on every push to `main` (and checks pull requests)
+with emsdk 4.0.10, fails if any ROM or `zelda3_assets.dat` ended up in `dist/`, and deploys it.
+The repository variable `DEPLOY_TARGET` picks where:
+
+- `cloudflare`: Cloudflare Workers static assets, free, works with a private repo. Config is
+  `web/wrangler.toml`; the site lands on `https://lttp-online.<account>.workers.dev`. One-time
+  setup: create a Cloudflare API token with the "Edit Cloudflare Workers" template and add repo
+  secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The multiplayer sync server can later
+  become this Worker's script (a Durable Object per room) on the same origin.
+- `pages`: GitHub Pages (free only for public repos). Set Settings > Pages > Source to
+  "GitHub Actions". The site works under a subpath since every URL in it is relative.
+- unset: build only; the built site is kept as the `web-dist` run artifact for 7 days.
+
+Deploy by hand with `cd web && npx wrangler@4 deploy` after `web/build.sh`.
+
 ## How it works
 
 1. **The player brings their own ROM.** The page asks for the US ROM, strips a copier header if
