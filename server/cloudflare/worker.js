@@ -5,7 +5,7 @@
 // being unloaded, and is deleted 12 hours after the last player leaves.
 import { Room, isRoomCode } from '../../web/site/sync/room.js';
 
-const LIVE = new Set(['pos', 'at', 'mobs', 'hit', 'tiles']);
+const LIVE = new Set(['pos', 'at', 'mobs', 'hit', 'tiles', 'seed-get', 'seed-part', 'seed-fail']);
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 
 export default {

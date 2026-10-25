@@ -6,11 +6,15 @@ import { zelda3Backend } from './sync/zelda3-backend.js';
 import { snesBackend } from './sync/snes-backend.js';
 import { isRoomCode, newRoomCode, VANILLA_GAME } from './sync/room.js';
 import { identifyRom, stripHeader } from './rom-info.js';
+import { askRoomSeed, makeSeedPatch, rebuildSeed } from './sync/seed-share.js';
 import { startGhosts } from './ghosts.js';
 import { createControls } from './controls.js';
 
 const GAME_DIR = '/zelda3';
 const SEED_KEY = 'seed-rom';   // the randomizer ROM, kept in this browser only
+// Original copies of the game (rom-info.js BASE_ROMS) by SHA-1, also kept in
+// this browser only: a room's seed arrives as a patch and is rebuilt from one.
+const BASES_KEY = 'base-roms';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -81,11 +85,105 @@ function extractAssets(rom) {
   });
 }
 
+// --- Original ROMs and shared seeds --------------------------------------------
+async function getBases() {
+  return Object.values((await kvGet(BASES_KEY)) ?? {});
+}
+async function addBase(rom, info) {
+  const bases = (await kvGet(BASES_KEY)) ?? {};
+  bases[info.sha1] = { sha1: info.sha1, label: info.base, rom: rom.slice() };
+  await kvSet(BASES_KEY, bases);
+}
+
+// The seed as a patch against the player's original ROM, for friends who join
+// without it (made once, then kept with the seed).
+async function seedPatchFor(seed) {
+  if (!seed.patch) {
+    seed.patch = await makeSeedPatch(seed.rom, seed.info, await getBases());
+    kvSet(SEED_KEY, seed).catch(() => {});
+  }
+  return seed.patch;
+}
+
+// When the page is opened with a room code: find out what the room plays and,
+// if it's a seed this browser doesn't have, get it from a player in the room.
+let roomSeedTimer = 0;
+let roomSeedRun = 0;
+let pendingPatch = null;   // a room's seed waiting for the right original ROM
+function showRoomSeed(text, isError = false) {
+  const el = $('room-seed');
+  el.hidden = !text;
+  el.textContent = text;
+  el.classList.toggle('error', isError);
+}
+function stopRoomSeed() {
+  clearTimeout(roomSeedTimer);
+  roomSeedRun++;
+  showRoomSeed('');
+}
+async function checkRoomSeed() {
+  clearTimeout(roomSeedTimer);
+  const code = roomCode;
+  if (!code || !$('game').hidden) { stopRoomSeed(); return; }
+  const run = ++roomSeedRun;
+  const stale = () => run !== roomSeedRun || roomCode !== code || !$('game').hidden;
+  const retry = (ms) => { roomSeedTimer = setTimeout(() => { if (!stale()) checkRoomSeed(); }, ms); };
+  const [assets, seed] = await Promise.all([kvGet(assetsKey), kvGet(SEED_KEY)]);
+  const have = [...(assets ? [VANILLA_GAME.id] : []), ...(seed ? [seed.info.gameId] : [])];
+  let res;
+  try {
+    res = await askRoomSeed({ url: resolveSyncUrl(buildInfo), room: code, have });
+  } catch {
+    if (!stale()) { showRoomSeed(''); retry(15000); }
+    return;
+  }
+  if (stale()) return;
+  if (!res.game) {
+    showRoomSeed(`Nobody is playing in room ${code} yet. Press Play to start it, or wait for whoever invited you.`);
+    retry(5000);
+  } else if (res.game.id === VANILLA_GAME.id) {
+    showRoomSeed(assets ? `Room ${code} plays the US game. Press Play to join.`
+      : `Room ${code} plays the US game. Load your US ROM to join.`);
+  } else if (res.have) {
+    showRoomSeed(`Room ${code} plays ${res.game.label}, which you have. Press Play seed to join.`);
+    $('play-seed').focus();
+  } else if (res.error) {
+    showRoomSeed(`Room ${code} plays ${res.game.label}. ${res.error} Trying again…`, true);
+    retry(8000);
+  } else {
+    await useRoomPatch(res.patch, res.game, code);
+  }
+}
+async function useRoomPatch(patch, game, code) {
+  try {
+    showRoomSeed(`Setting up ${game.label} from room ${code}…`);
+    const { rom, info } = await rebuildSeed(patch, await getBases(), game.id);
+    pendingPatch = null;
+    await kvSet(SEED_KEY, { rom, info, name: `room ${code}`, patch });
+    await showReady();
+    showRoomSeed(`Got ${info.label} from room ${code}. Press Play seed to join.`);
+    $('play-seed').focus();
+  } catch (e) {
+    pendingPatch = e.needsBase ? { patch, game, code } : null;
+    showRoomSeed(`Room ${code} plays ${game.label}. ${e.message}`, true);
+  }
+}
+
 async function onRomChosen(file) {
   const progress = $('progress');
   try {
     setStatus('Checking ROM…');
     const { rom, info } = await romFromFile(file);
+    if (info.base) await addBase(rom, info);
+    if (info.base && !info.vanilla) {
+      // An original game other than the US one (zelda3 only plays that):
+      // kept to rebuild seeds that friends share in a room.
+      setStatus(`Saved your ${info.base} ROM. Randomizer seeds made from it now come to you automatically when you join a room.`);
+      await showReady();
+      if (pendingPatch) await useRoomPatch(pendingPatch.patch, pendingPatch.game, pendingPatch.code);
+      else checkRoomSeed();
+      return;
+    }
     if (!info.vanilla) {
       // A randomizer seed (or other version): the emulator plays the ROM
       // itself, so keep it in this browser for next time.
@@ -99,7 +197,9 @@ async function onRomChosen(file) {
     const assets = await extractAssets(rom);
     await kvSet(assetsKey, assets);
     setStatus(`Assets ready (${((performance.now() - t0) / 1000).toFixed(0)} s).`);
-    showReady();
+    await showReady();
+    if (pendingPatch) await useRoomPatch(pendingPatch.patch, pendingPatch.game, pendingPatch.code);
+    else checkRoomSeed();
   } catch (err) {
     setStatus(err.message, true);
   } finally {
@@ -111,7 +211,9 @@ async function onRomChosen(file) {
 // Lists the games this browser has ready: the US game (extracted assets) and
 // the last randomizer seed loaded.
 async function showReady() {
-  const [assets, seed] = await Promise.all([kvGet(assetsKey), kvGet(SEED_KEY)]);
+  const [assets, seed, bases] = await Promise.all([kvGet(assetsKey), kvGet(SEED_KEY), getBases()]);
+  $('bases').hidden = !bases.length;
+  $('bases-list').textContent = bases.map((b) => b.label).join(' and ');
   if (!assets && !seed) { showNeedRom(); return; }
   $('need-rom').hidden = true;
   $('ready').hidden = false;
@@ -192,6 +294,7 @@ async function startGame() {
 }
 
 function showGame() {
+  stopRoomSeed();
   $('setup').hidden = true;
   $('multiplayer').hidden = true;
   $('game').hidden = false;
@@ -222,7 +325,7 @@ async function startSeed() {
   $('game-status').textContent = seed.info.code ? 'Seed ' + seed.info.code.join(' · ') : seed.info.label;
   canvas.focus();
   window.lttpEmu = emu;  // for debugging
-  startSync(snesBackend(emu), { id: seed.info.gameId, label: seed.info.label });
+  startSync(snesBackend(emu), { id: seed.info.gameId, label: seed.info.label }, () => seedPatchFor(seed));
 }
 
 // --- Multiplayer -------------------------------------------------------------
@@ -244,7 +347,10 @@ function setRoom(code) {
     $('mp-room-code').textContent = code;
     $('mp-link').value = url.toString();
   }
+  pendingPatch = null;
+  if (ready) checkRoomSeed();
 }
+let ready = false;   // page set up; room checks wait until then
 
 function showNotice(html) {
   const el = document.createElement('div');
@@ -256,7 +362,7 @@ function showNotice(html) {
 }
 const escapeHtml = (t) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function startSync(backend, game) {
+function startSync(backend, game, seedPatch = null) {
   if (!roomCode) return;
   const statusEl = $('mp-status');
   const label = { connecting: 'connecting…', reconnecting: 'reconnecting…', connected: '',
@@ -267,6 +373,7 @@ function startSync(backend, game) {
     name: $('mp-name').value.trim() || 'Link',
     backend,
     game,
+    seedPatch,
     onStatus: ({ state, detail, players, you }) => {
       let text = `Room ${roomCode}: ` + (label[state] ?? state);
       if (state === 'connected') {
@@ -330,6 +437,11 @@ $('forget').addEventListener('click', async () => {
   setStatus('');
   showReady();
 });
+$('forget-bases').addEventListener('click', async () => {
+  await kvDel(BASES_KEY);
+  setStatus('');
+  showReady();
+});
 $('forget-seed').addEventListener('click', async () => {
   await kvDel(SEED_KEY);
   setStatus('');
@@ -356,3 +468,5 @@ try {
   controls = createControls({ keymapText: '', root: $('pad') });
 }
 await showReady();
+ready = true;
+checkRoomSeed();

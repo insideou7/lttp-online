@@ -21,6 +21,8 @@
           randomizer seed made from your ROM (ALttPR and other randomizers).
           It never leaves your computer: the game assets are extracted here, in your browser,
           and kept in this browser's storage so you only do this once.</p>
+        <p>Joining friends who play a randomizer seed? Load your Japanese 1.0 ROM once
+          (the one ALttPR uses) and their seed is sent to you as a patch when you open the room.</p>
         <label class="button" for="rom-input">Choose ROM file</label>
         <input id="rom-input" type="file" accept=".sfc,.smc,.bin" hidden>
       </div>
@@ -33,13 +35,16 @@
         </div>
         <div id="ready-seed" class="game-row" hidden>
           <p>Randomizer seed <strong id="seed-label"></strong> <span id="seed-title" class="muted"></span>,
-            on the SNES emulator. Friends in your room need the same seed.</p>
+            on the SNES emulator. Friends who join your room get it from you automatically.</p>
           <button id="play-seed" class="button">Play seed</button>
           <button id="forget-seed" class="link">Forget</button>
         </div>
         <label class="link add-rom" for="rom-input-2">Load another ROM or seed</label>
         <input id="rom-input-2" type="file" accept=".sfc,.smc,.bin" hidden>
       </div>
+      <p id="bases" class="muted" hidden>Original ROM saved for rebuilding seeds friends share:
+        <span id="bases-list"></span>. <button id="forget-bases" class="link">Forget</button></p>
+      <p id="room-seed" role="status" aria-live="polite" hidden></p>
       <p id="status" role="status" aria-live="polite"></p>
       <progress id="progress" hidden></progress>
     </section>
@@ -60,7 +65,8 @@
       </div>
       <div id="mp-room" hidden>
         <p>Room <strong id="mp-room-code"></strong>. Send this link to friends; they open it,
-          load their own ROM and press Play.</p>
+          load their own ROM once and press Play. For a randomizer seed they load the original
+          Japanese 1.0 ROM, and the seed comes from you as a patch.</p>
         <div class="row">
           <input id="mp-link" readonly aria-label="Invite link">
           <button id="mp-copy" class="button secondary">Copy link</button>

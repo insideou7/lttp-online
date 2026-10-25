@@ -20,6 +20,9 @@ the game in their browser and goes wherever they like; a small server relays onl
 1. Open the site, press **Create room** and send the invite link (`.../?room=CODE`) to friends.
    They can also type the code into **Join**.
 2. Everyone loads their own ROM and presses **Play**, then starts or loads a save file.
+   For a randomizer seed, only the host needs the seed file: friends load their own original
+   Japanese 1.0 ROM once (the one ALttPR seeds are made from), and when they open the invite link
+   the seed is sent to them as a patch and set up automatically (see *Sharing a seed* below).
 3. The first player to reach gameplay seeds the room with their save's progress. Players who join
    later get the room's progress merged into their file (anything extra they had is shared too).
    When someone gets an item, the others see "*Name* got *item*" and have it right away.
@@ -128,6 +131,18 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   sets the room's game, which is kept with its progress; a player with a different seed gets
   `wrong-game` and isn't let in, and their page says which seed the room plays. Pages from before
   this count as the US game. A room with no progress and nobody in it takes the next game.
+- Sharing a seed (protocol 5, `seed-share.js`, `bps.js`): a page opened with a room code connects
+  without joining and sends `seed-get` with the game ids it already has. If the room plays a seed
+  it lacks, the server asks a player in the room who said `share` in their `hello` (a seed player)
+  to send it. That player's page makes a BPS patch from its saved original ROM (the one sharing the
+  most bytes with the seed, normally Japanese 1.0) to the seed, deflates it (an ALttPR seed is about
+  90 KB, and the patch holds the randomizer's changes, not the game's code: unchanged and moved data
+  are copies from the original ROM) and sends it in `seed-part` messages that the server relays to
+  the asker without storing them (at most 24 parts of 64 KiB). The asker rebuilds the seed from
+  its own original ROM; the patch's CRCs and metadata (original and seed SHA-1, game id) are
+  checked, and the result must be the room's game. If its original ROM is missing, the page says
+  which one to load and finishes once it's loaded. Nobody sharing online: the page retries. No ROM
+  or patch is ever stored on the server.
 - Randomizer-only items: `swapItems` ($7EF38C, which of the items sharing a menu slot you own,
   minus the mushroom the witch takes) and `bowFlags` ($7EF38E) are shared bits. They stay zero in
   the plain game.

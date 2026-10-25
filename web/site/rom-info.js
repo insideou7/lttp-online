@@ -6,6 +6,14 @@
 export const US_ROM_SHA1 = '6d4f10a8b10e10dbe624cb23cf03b88bb8252973';
 export const VANILLA_GAME_ID = 'lttp-us';
 
+// Unmodified copies of the game that randomizer seeds are built from. A room
+// sends a seed as a patch against one of these, and each player rebuilds the
+// seed from their own copy. ALttPR seeds are made from the Japanese 1.0 ROM.
+export const BASE_ROMS = {
+  [US_ROM_SHA1]: 'US',
+  'e7e852f0159ce612e3911164878a9b08b3cb9060': 'Japanese 1.0',
+};
+
 // Randomizers (ALttPR, door/entrance randomizers, Archipelago) write a
 // five-icon "code" for the seed at this ROM offset; it's shown on the file
 // select screen, so players can compare it at a glance.
@@ -43,7 +51,7 @@ function title(rom) {
 export async function identifyRom(rom) {
   const sha1 = await sha1Hex(rom);
   if (sha1 === US_ROM_SHA1) {
-    return { sha1, vanilla: true, title: 'THE LEGEND OF ZELDA', gameId: VANILLA_GAME_ID, label: 'A Link to the Past (US)' };
+    return { sha1, vanilla: true, base: BASE_ROMS[sha1], title: 'THE LEGEND OF ZELDA', gameId: VANILLA_GAME_ID, label: 'A Link to the Past (US)' };
   }
   if (rom.length < 0x100000 || rom.length > 0x400000) {
     throw new Error('This file is not a Link to the Past ROM (wrong size).');
@@ -64,6 +72,7 @@ export async function identifyRom(rom) {
   return {
     sha1,
     vanilla: false,
+    base: BASE_ROMS[sha1],   // an original game, e.g. the Japanese ROM ALttPR uses
     title: name,
     code: codeNames ?? null,
     // Cosmetic options (Link's sprite, heart color, music) change the ROM's
