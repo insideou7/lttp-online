@@ -1,0 +1,43 @@
+# Deploys the multiplayer sync server to Cloudflare Workers on pushes to main.
+# Code: server/cloudflare/ (wraps the shared room logic in web/site/sync/room.js).
+#
+# One-time setup, see docs/multiplayer.md: add repository secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. Without them this only
+# checks that the Worker bundles.
+name: Sync server
+
+on:
+  push:
+    branches: [main]
+    paths: ['server/cloudflare/**', 'web/site/sync/**', '.github/workflows/sync-server.yml']
+  pull_request:
+    paths: ['server/cloudflare/**', 'web/site/sync/**', '.github/workflows/sync-server.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: sync-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the Worker bundles
+        working-directory: server/cloudflare
+        run: npx -y wrangler@4.152.0 deploy --dry-run --outdir "$RUNNER_TEMP/worker"
+      - if: env.HAS_TOKEN == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: server/cloudflare
+          wranglerVersion: "4.152.0"
+          command: deploy

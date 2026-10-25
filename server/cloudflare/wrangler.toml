@@ -1,0 +1,14 @@
+# Cloudflare Workers deploy of the multiplayer sync server.
+# Deployed by .github/workflows/sync-server.yml; by hand: npx wrangler@4 deploy
+# The WebSocket URL is then wss://lttp-sync.<your-subdomain>.workers.dev/sync
+name = "lttp-sync"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "SyncRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SyncRoom"]

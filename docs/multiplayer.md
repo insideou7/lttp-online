@@ -41,6 +41,26 @@ the status line says so; the client keeps retrying.
 
 `npm test` runs the sync tests (merge rules, the room, and two clients through the real server).
 
+## Hosting the server
+
+The site is on GitHub Pages, which only serves files, so the sync server runs on Cloudflare
+Workers (free plan). `server/cloudflare/worker.js` wraps the same `room.js` in a Durable Object per
+room, which saves the room's progress to storage and deletes it 12 hours after the last player
+leaves. `.github/workflows/sync-server.yml` deploys it on pushes to `main`.
+
+One-time setup:
+
+1. Make a free Cloudflare account. In My Profile > API Tokens, create a token from the
+   "Edit Cloudflare Workers" template. Copy the Account ID from the Workers & Pages overview.
+2. In the repo's Settings > Secrets and variables > Actions, add secrets `CLOUDFLARE_API_TOKEN`
+   and `CLOUDFLARE_ACCOUNT_ID`.
+3. Run the "Sync server" workflow. Its log ends with the Worker's URL,
+   `https://lttp-sync.<subdomain>.workers.dev`.
+4. Add a repository variable `SYNC_URL` = `wss://lttp-sync.<subdomain>.workers.dev/sync` and run the
+   "Web client" workflow, so the site connects to it by default.
+
+Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint on port 8787.
+
 ## How it works
 
 - `web/site/sync/fields.js`: which save RAM bytes ($7EF000-$7EF3FF) are shared and how two values
@@ -53,7 +73,7 @@ the status line says so; the client keeps retrying.
   RAM between frames. It also writes back shared flags the game overwrote (a dungeon room saves its
   flags from the copy it loaded, which can predate another player's chest).
 - `web/site/sync/room.js`: the server-side room, with no transport: messages in, messages out.
-  `server/index.js` wraps it in WebSockets; a Cloudflare Durable Object could wrap it the same way.
+  `server/index.js` wraps it in WebSockets; `server/cloudflare/worker.js` wraps it in a Durable Object.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
   redraw the HUD, sword, shield and armor after a remote change. An SNES emulator backend for
@@ -66,6 +86,7 @@ the status line says so; the client keeps retrying.
   it closed until they leave the room, and could open it again.
 - zelda3's optional "switch between bow and silver arrows" feature is undone by the sync (owning
   the silver bow is a shared level).
-- Rooms are in memory: restarting the server forgets them (players' own saves are unaffected).
+- With the Node server, rooms are in memory: restarting it forgets them (players' own saves are
+  unaffected). The Cloudflare server keeps them in storage.
 - Small keys are per player. A key one player picks up isn't available to the others, but doors
   it opens are open for everyone.
