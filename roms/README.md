@@ -1,5 +1,9 @@
 # ROMs (not in git)
 
+In Claude cloud sessions you only need to upload your ROM once, in the project chat. It is kept in
+the project's shared files, and `tools/setup-re-toolkit.sh` finds it there at the start of every
+session, checks it is the US version, and places it here (header stripped).
+
 Put your own legally dumped ROM here. Nothing in this folder is committed.
 
 - `zelda3.sfc`: US version, needed by the snesrev/zelda3 asset extractor.

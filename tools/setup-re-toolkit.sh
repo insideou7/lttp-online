@@ -83,7 +83,27 @@ if [ "$(rea --version 2>/dev/null || true)" != "$REA_VERSION" ]; then
   npm install -g -s "rea-agents@$REA_VERSION" >/dev/null
 fi
 
-# 6. Environment for this and later shells
+# 6. Your ROM: if roms/zelda3.sfc is missing, look for a matching upload in the
+#    project's shared files (which outlive each session) and strip any copier header.
+REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
+ROM="$REPO_DIR/roms/zelda3.sfc"
+US_SHA1=6d4f10a8b10e10dbe624cb23cf03b88bb8252973
+if [ ! -f "$ROM" ] && [ -d /mnt/project-files/uploads ]; then
+  while IFS= read -r f; do
+    size=$(stat -c %s "$f")
+    skip=$(( size % 0x8000 == 512 ? 512 : 0 ))
+    if [ "$(tail -c +$((skip + 1)) "$f" | sha1sum | cut -d' ' -f1)" = "$US_SHA1" ]; then
+      tail -c +$((skip + 1)) "$f" > "$ROM"; log "found your US ROM in project files: $f"; break
+    fi
+  done < <(find /mnt/project-files/uploads/ -type f \( -size 1048576c -o -size 1049088c \) 2>/dev/null)
+fi
+if [ -f "$ROM" ] && [ ! -f "$SRC/zelda3/zelda3_assets.dat" ]; then
+  log "extracting zelda3 assets from your ROM"
+  cp "$ROM" "$SRC/zelda3/zelda3.sfc"
+  (cd "$SRC/zelda3" && python3 assets/restool.py --extract-from-rom >>"$BUILD_LOG" 2>&1)
+fi
+
+# 7. Environment for this and later shells
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   {
     echo "export RE_HOME=$RE_HOME"
