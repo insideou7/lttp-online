@@ -73,22 +73,43 @@ export function readSlot(ram, s) { return Uint8Array.from(SPRITE_TABLES, (t) => 
 export function writeSlot(ram, s, bytes) { SPRITE_TABLES.forEach((t, j) => ram.set(t + s, bytes[j])); }
 const slotIn = (snap, table, s) => snap[SPRITE_TABLES.indexOf(table) * 16 + s];
 
-// Did this player's game do something to slot s since we wrote `before`?
+// Is a sprite at (x, y) right next to this player's Link?
+const nearLink = (ram, x, y, d) => Math.abs(x - r16(ram, 0x22)) < d && Math.abs(y - r16(ram, 0x20)) < d + 8;
+const slotX = (get, s) => get(0xD10, s) | (get(0xD30, s) << 8);
+const slotY = (get, s) => get(0xD00, s) | (get(0xD20, s) << 8);
+
+// What did this player's game do to slot s since we wrote `before`?
+// 'hit': damaged, stunned, killed or picked up one of the owner's sprites.
+// 'new': made a sprite there itself, next to Link (an item from a pot or
+// bush, a thrown pot), or threw something it was carrying.
+// Otherwise null (including the game dropping sprites it thinks are off screen).
 function touched(ram, before, s) {
   const was = slotIn(before, STATE, s);
-  if (!was || ram.get(TYPE + s) !== slotIn(before, TYPE, s)) return false;
   const cur = ram.get(STATE + s);
-  if (cur === S_CARRIED) return false;
-  if (ram.get(HEALTH + s) < slotIn(before, HEALTH, s)) return true;
-  if (ram.get(HIT_TIMER + s) > slotIn(before, HIT_TIMER, s)) return true;
-  if (ram.get(STUN + s) > slotIn(before, STUN, s)) return true;
-  if (cur !== was && (cur === S_DYING || cur === S_STUNNED)) return true;
+  const sameType = ram.get(TYPE + s) === slotIn(before, TYPE, s);
+  if (was === S_CARRIED) return cur && cur !== S_CARRIED ? 'new' : null;
+  if (!was || !sameType) {
+    const now = (t, i) => ram.get(t + i);
+    if (!cur || cur === S_CARRIED) return null;
+    const x = slotX(now, s), y = slotY(now, s);
+    if (!nearLink(ram, x, y, 48)) return null;
+    // An enemy's death drop: the owner's game makes its own.
+    const old = (t, i) => slotIn(before, t, i);
+    for (let j = 0; j < 16; j++) {
+      if (old(STATE, j) === S_DYING && Math.abs(slotX(old, j) - x) < 24 && Math.abs(slotY(old, j) - y) < 24) return null;
+    }
+    return 'new';
+  }
+  if (cur === S_CARRIED) return null;
+  if (ram.get(HEALTH + s) < slotIn(before, HEALTH, s)) return 'hit';
+  if (ram.get(HIT_TIMER + s) > slotIn(before, HIT_TIMER, s)) return 'hit';
+  if (ram.get(STUN + s) > slotIn(before, STUN, s)) return 'hit';
+  if (cur !== was && (cur === S_DYING || cur === S_STUNNED)) return 'hit';
   // A pickup vanished next to Link: he took it. (Elsewhere the game just
   // stopped running it because it's off this player's screen.)
-  if (cur !== 0 || !PICKUPS.has(slotIn(before, TYPE, s))) return false;
-  const x = slotIn(before, 0xD10, s) | (slotIn(before, 0xD30, s) << 8);
-  const y = slotIn(before, 0xD00, s) | (slotIn(before, 0xD20, s) << 8);
-  return Math.abs(x - r16(ram, 0x22)) < 32 && Math.abs(y - r16(ram, 0x20)) < 40;
+  if (cur !== 0 || !PICKUPS.has(slotIn(before, TYPE, s))) return null;
+  const old = (t, i) => slotIn(before, t, i);
+  return nearLink(ram, slotX(old, s), slotY(old, s), 32) ? 'hit' : null;
 }
 
 export class MobSync {
@@ -139,9 +160,11 @@ export class MobSync {
     const ram = this.ram;
     if (!this.written || this.writtenKey !== k) return;
     for (let s = 0; s < 16; s++) {
-      if ((this.lease.get(s) ?? 0) > now || !touched(ram, this.written, s)) continue;
+      if ((this.lease.get(s) ?? 0) > now) continue;
+      const what = touched(ram, this.written, s);
+      if (!what) continue;
       const slot = readSlot(ram, s);
-      this.send({ t: 'hit', k, s, d: toBase64(slot) });
+      this.send({ t: 'hit', k, s, d: toBase64(slot), ...(what === 'new' ? { n: 1 } : {}) });
       this.lease.set(s, now + LEASE_MS);
       SPRITE_TABLES.forEach((_, j) => { this.written[j * 16 + s] = slot[j]; });
     }
@@ -165,11 +188,18 @@ export class MobSync {
   }
 
   // Owner: another player hit one of our enemies; their copy of it wins.
+  // Or they made a new sprite: it goes in the same slot if that's free.
   onHit(msg) {
     const ram = this.ram;
     if (msg.k !== areaKey(ram) || !steady(ram)) return;
     const slot = fromBase64(msg.d);
     if (slot.length !== SPRITE_TABLES.length || !int(msg.s)) return;
+    if (msg.n) {
+      let s = msg.s;
+      if (ram.get(STATE + s)) s = [...Array(16).keys()].find((i) => !ram.get(STATE + i)) ?? -1;
+      if (s >= 0) writeSlot(ram, s, slot);
+      return;
+    }
     const typeAt = SPRITE_TABLES.indexOf(TYPE);
     if (!ram.get(STATE + msg.s) || ram.get(TYPE + msg.s) !== slot[typeAt]) return;
     writeSlot(ram, msg.s, slot);
