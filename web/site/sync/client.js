@@ -14,6 +14,7 @@
 import { FIELDS, FIELD_BY_KEY, applyOp, diff, snapshot, describeOp } from './fields.js';
 import { PresenceSender, RemotePlayers } from './presence.js';
 import { MobSync } from './mobs.js';
+import { RoomTiles } from './tiles.js';
 
 const TICK_MS = 100;
 const PRESENCE_MS = 66;   // position updates: 15 a second, only when something moved
@@ -36,6 +37,7 @@ export class SyncClient {
     this.presence = backend.video ? new PresenceSender(backend) : null;
     this.remote = new RemotePlayers();   // other players' Links, for drawing
     this.mobs = new MobSync(backend, (msg) => this.send(msg));   // shared enemies
+    this.tiles = new RoomTiles(backend, (msg) => this.send(msg)); // shared pots, switches...
   }
 
   start() {
@@ -84,6 +86,7 @@ export class SyncClient {
       this.known = null;
       this.remote.clear();
       this.mobs.reset();
+      this.tiles.reset();
       this.syncSent = false;
       if (this.closed) return;
       this.status(opened ? 'reconnecting' : 'unreachable');
@@ -108,6 +111,8 @@ export class SyncClient {
         this.serverVersion = msg.v ?? 1;
         this.presence?.reset();
         this.mobs.reset();
+        this.tiles.reset();
+      this.tiles.reset();
         this.status('connected');
         break;
       case 'players':
@@ -128,6 +133,9 @@ export class SyncClient {
         break;
       case 'hit':
         this.mobs.onHit(msg);
+        break;
+      case 'tiles':
+        this.tiles.onTiles(msg);
         break;
       case 'synced':
         this.onSynced(msg.state);
@@ -207,7 +215,10 @@ export class SyncClient {
     const p = this.presence?.next();
     if (p !== undefined) this.send({ t: 'pos', p });
     // Shared enemies need protocol 3.
-    if (this.serverVersion >= 3) this.mobs.tick(this.you);
+    if (this.serverVersion >= 3) {
+      this.mobs.tick(this.you);
+      this.tiles.tick(this.you, this.mobs.owner);
+    }
   }
 
   tick() {

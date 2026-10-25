@@ -13,7 +13,10 @@
 //     { t: 'at', k }                       which room/area this player's enemies
 //                                          belong to (mobs.js), or null; v3+
 //     { t: 'mobs', k, d }                  owner of k: its enemies (base64 bytes)
-//     { t: 'hit', k, s, d }                non-owner: it hit enemy slot s (bytes)
+//     { t: 'hit', k, s, d, n? }            non-owner: it hit enemy slot s (bytes),
+//                                          or made a new sprite there (n)
+//     { t: 'tiles', k, c, f? }             room objects changed (tiles.js): pairs of
+//                                          RAM address and byte; f = everything so far
 //   server -> client
 //     { t: 'welcome', you, players }       reply to hello
 //     { t: 'players', players }            someone joined or left
@@ -23,11 +26,13 @@
 //     { t: 'owner', k, id, n }             id runs the enemies at k; n players are there
 //     { t: 'mobs', from, k, d }            the enemies at k, from their owner
 //     { t: 'hit', from, k, s, d }          to the owner: another player hit slot s
+//     { t: 'tiles', from, k, c, f? }       room objects another player changed
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
 export const PROTOCOL_VERSION = 3;
 const MAX_MOBS_B64 = 4096;
+const MAX_TILE_PAIRS = 0x2000;
 const MAX_PLAYERS = 8;
 const MAX_NAME = 24;
 
@@ -148,12 +153,21 @@ export class Room {
         return this.playersAt(k).filter((to) => to !== id)
           .map((to) => ({ to, msg: { t: 'mobs', from: id, k, d: msg.d } }));
       }
+      case 'tiles': {
+        const k = areaKey(msg.k);
+        const c = msg.c;
+        if (k === undefined || this.players.get(id).at !== k) return [];
+        if (!Array.isArray(c) || c.length % 2 || c.length > MAX_TILE_PAIRS * 2 ||
+            !c.every((v, i) => int(v, 0, i % 2 ? 0xff : 0x1ffff))) return err('bad tiles');
+        return this.playersAt(k).filter((to) => to !== id)
+          .map((to) => ({ to, msg: { t: 'tiles', from: id, k, c, ...(msg.f ? { f: 1 } : {}) } }));
+      }
       case 'hit': {
         const k = areaKey(msg.k);
         const owner = this.owners.get(k);
         if (k === undefined || owner === undefined || owner === id || this.players.get(id).at !== k) return [];
         if (!int(msg.s, 0, 15) || !isB64(msg.d)) return err('bad hit');
-        return [{ to: owner, msg: { t: 'hit', from: id, k, s: msg.s, d: msg.d } }];
+        return [{ to: owner, msg: { t: 'hit', from: id, k, s: msg.s, d: msg.d, ...(msg.n ? { n: 1 } : {}) } }];
       }
     }
     return err('unknown message type');

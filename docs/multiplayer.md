@@ -28,6 +28,10 @@ the game in their browser and goes wherever they like; a small server relays onl
 5. Enemies are shared too: players in the same room or area see the same monsters, and anyone's
    hit counts. The first player to arrive hosts that room's enemies; when they leave, the next
    player there takes over.
+6. Indoors (dungeons, houses, caves), the room itself is shared: a pot one player lifts is gone
+   for everyone (and its hidden item can only be taken once), and switches, pegs, unlocked
+   doors and lit torches change for everyone in the room. Anyone who walks in later sees the room
+   as it is.
 
 No accounts: a room is just its code. The server keeps a room's progress in memory for 12 hours
 after the last player leaves. In-game saves keep everything as usual, in each player's browser.
@@ -99,6 +103,13 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   the owner (`hit`), whose game takes it over, and keeps its own copy for 0.4 s so the hit
   doesn't flicker back. Enemies only chase and attack the owner's Link between copies, though
   they still hurt anyone who touches them.
+- `web/site/sync/tiles.js`: shared room objects indoors. Each client in a dungeon room watches the
+  room's tilemaps ($7E2000-$7E5FFF), collision map ($7F2000-$7F3FFF), crystal switch state
+  ($7EC172) and taken pot items ($7EF580). Bytes its own game changes go to the others in the room
+  (`tiles`), who write them and queue the redraw in the game's own VRAM upload list ($7E1000,
+  flag $7E0014), the way `Dungeon_Store2x2` does. The room's enemy host also sends every change
+  since it arrived to each newcomer. Items that pop out of a pot or bush a non-host lifted, and
+  pots they throw, are handed to the host as new sprites (`hit` with `n`), so they don't vanish.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
   redraw the HUD, sword, shield and armor after a remote change. An SNES emulator backend for
@@ -111,7 +122,10 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
 - Shared enemies: an enemy right at the edge of your screen can flicker when the room's host is
   some distance away, because your game stops running enemies it thinks are off screen. Bosses
   keep extra state outside the sprite tables and may act oddly for non-hosts. Items an enemy
-  drops are the host's roll. Pots, bushes, blocks and switches aren't shared yet.
+  drops are the host's roll.
+- Shared rooms are indoors only: on the overworld, bushes and rocks one player lifts stay for the
+  others. Pushed blocks go through the same tile changes but haven't been tried with two players.
+  Another player carrying a pot isn't shown.
 
 - Other players are drawn over everything, including the HUD and things they'd walk behind
   (doorways, tree tops). The people and enemies they carry or fight aren't shown, only their Link.
