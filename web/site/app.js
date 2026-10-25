@@ -7,6 +7,7 @@ import { snesBackend } from './sync/snes-backend.js';
 import { isRoomCode, newRoomCode, VANILLA_GAME } from './sync/room.js';
 import { identifyRom, stripHeader } from './rom-info.js';
 import { startGhosts } from './ghosts.js';
+import { createControls } from './controls.js';
 
 const GAME_DIR = '/zelda3';
 const SEED_KEY = 'seed-rom';   // the randomizer ROM, kept in this browser only
@@ -177,6 +178,13 @@ async function startGame() {
   game.callMain([]);
   canvas.focus();
   window.lttp = game;  // handy for debugging from the console
+  // The page reads keys and gamepads (controls.js) and hands zelda3 the buttons.
+  controls.setActive(true);
+  const feedButtons = () => {
+    game._web_set_buttons(controls.buttons());
+    requestAnimationFrame(feedButtons);
+  };
+  feedButtons();
   startSync(zelda3Backend(game), VANILLA_GAME);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') persistSaves();
@@ -194,22 +202,22 @@ async function startSeed() {
   const seed = await kvGet(SEED_KEY);
   if (!seed) { showNeedRom(); return; }
   setStatus('Starting emulator…');
-  const [{ default: createSnes }, { startEmulator }, keymap] = await Promise.all([
+  const [{ default: createSnes }, { startEmulator }] = await Promise.all([
     import('./snes.js' + ver),
     import('./emu.js' + ver),
-    fetch('keymap.ini' + ver).then((r) => r.text()),
   ]);
   const canvas = $('canvas');
   const emu = await startEmulator({
     createSnes: (opts) => createSnes({ locateFile: (path, dir) => dir + path + ver, ...opts }),
     canvas,
     rom: seed.rom,
-    keymap,
+    buttons: controls.buttons,
     store: { get: kvGet, set: kvSet },
     gameId: seed.info.gameId,
     onError: (msg) => { $('game-status').textContent = 'Error: ' + msg; },
   });
   emu.onMessage = (text) => showNotice(escapeHtml(text));
+  controls.setActive(true);
   showGame();
   $('game-status').textContent = seed.info.code ? 'Seed ' + seed.info.code.join(' · ') : seed.info.label;
   canvas.focus();
@@ -338,4 +346,13 @@ $('fullscreen').addEventListener('click', () => {
 });
 
 await loadBuildInfo();
+// Controls picture and key bindings; defaults come from keymap.ini.
+let controls;
+try {
+  const keymapText = await (await fetch('keymap.ini' + ver)).text();
+  controls = createControls({ keymapText, root: $('pad') });
+} catch (e) {
+  console.warn('Controls failed to load', e);
+  controls = createControls({ keymapText: '', root: $('pad') });
+}
 await showReady();

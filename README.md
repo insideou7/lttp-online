@@ -23,8 +23,9 @@ core in the page, with the same online co-op. Everyone in a room must load the s
 | X / Y | I / L | | Turbo | Tab (hold) |
 
 Arrow keys, Enter and Right Shift also work, and so do gamepads. Save states: Shift+F1…F10 to
-save, F1…F10 to load. In-game saves are kept in your browser. To change the keys, edit
-[`web/keymap.ini`](web/keymap.ini) (and the controls table in `web/site/index.html`).
+save, F1…F10 to load. In-game saves are kept in your browser. To change a key or gamepad button,
+click it on the controller picture on the page and press the new one; it applies right away and
+is remembered in that browser. The defaults are in [`web/keymap.ini`](web/keymap.ini).
 
 ## Playing online
 

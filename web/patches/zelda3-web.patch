@@ -1,5 +1,5 @@
 diff --git a/src/main.c b/src/main.c
-index 2b42744..1c07381 100644
+index 2b42744..9602c96 100644
 --- a/src/main.c
 +++ b/src/main.c
 @@ -4,6 +4,9 @@
@@ -23,7 +23,7 @@ index 2b42744..1c07381 100644
    exit(1);
  }
  
-@@ -276,6 +283,157 @@ static const struct RendererFuncs kSdlRendererFuncs  = {
+@@ -276,6 +283,167 @@ static const struct RendererFuncs kSdlRendererFuncs  = {
  
  void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
  
@@ -83,12 +83,22 @@ index 2b42744..1c07381 100644
 +  }
 +}
 +
++#ifdef __EMSCRIPTEN__
++// SNES buttons held on the page's keyboard and gamepad bindings (bit 0 B,
++// 1 Y, 2 Select, 3 Start, 4-7 Up Down Left Right, 8 A, 9 X, 10 L, 11 R).
++static int g_web_buttons;
++EMSCRIPTEN_KEEPALIVE void web_set_buttons(int buttons) { g_web_buttons = buttons; }
++#endif
++
 +static bool RunEmulatedFrame(void) {
 +  // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
 +  int inputs = g_input1_state;
 +  if (g_input1_state & 0xf0)
 +    g_gamepad_buttons = 0;
 +  inputs |= g_gamepad_buttons;
++#ifdef __EMSCRIPTEN__
++  inputs |= g_web_buttons;
++#endif
 +
 +  SDL_LockMutex(g_audio_mutex);
 +  bool is_replay = ZeldaRunFrame(inputs);
@@ -181,7 +191,21 @@ index 2b42744..1c07381 100644
  #undef main
  int main(int argc, char** argv) {
    argc--, argv++;
-@@ -390,111 +548,19 @@ int main(int argc, char** argv) {
+@@ -327,7 +495,13 @@ int main(int argc, char** argv) {
+     g_config.audio_samples = kDefaultSamples;
+ 
+   // set up SDL
++#ifdef __EMSCRIPTEN__
++  // The page reads keyboard and gamepads itself and passes the buttons in
++  // with web_set_buttons(), so players can remap them (web/site/controls.js).
++  if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
++#else
+   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
++#endif
+     printf("Failed to init SDL: %s\n", SDL_GetError());
+     return 1;
+   }
+@@ -390,111 +564,19 @@ int main(int argc, char** argv) {
    for (int i = 0; i < SDL_NumJoysticks(); i++)
      OpenOneGamepad(i);
  

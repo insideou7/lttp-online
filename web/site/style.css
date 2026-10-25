@@ -126,3 +126,34 @@ canvas.ghosts { position: absolute; pointer-events: none; image-rendering: pixel
 .game-row p { margin: 0 0 8px; }
 .muted { color: var(--muted); }
 .add-rom { display: inline-block; margin-left: 0; }
+
+/* Controls: an SNES-style pad whose buttons show their key (controls.js). */
+.pad-tabs { display: flex; gap: 4px; margin: 0 0 8px; }
+.pad-tab {
+  font: inherit; font-size: 14px; color: var(--muted); background: transparent; cursor: pointer;
+  border: 1px solid #fff3; border-radius: 999px; padding: 4px 14px;
+}
+.pad-tab[aria-selected="true"] { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.snes-pad { display: block; width: 100%; max-width: 560px; height: auto; margin: 0 auto; user-select: none; }
+.snes-pad .body { fill: #c9c9d3; stroke: #0005; stroke-width: 2; }
+.snes-pad .shoulder { fill: #8f8f9c; stroke: #0005; stroke-width: 2; }
+.snes-pad .well { fill: #a9a9b6; }
+.snes-pad .dpad-base, .snes-pad .arm { fill: #2b2b31; }
+.snes-pad .pill { fill: #6e6e7a; }
+.snes-pad .face { stroke: #0006; stroke-width: 2; }
+.snes-pad text { text-anchor: middle; dominant-baseline: central; pointer-events: none; font-family: system-ui, sans-serif; }
+.snes-pad .letter { fill: #5d5d6b; font-size: 18px; font-weight: 700; }
+.snes-pad .caption { fill: #5d5d6b; font-size: 12px; font-weight: 600; letter-spacing: 1px; }
+.snes-pad .key { fill: #fff; font-size: 17px; font-weight: 700; }
+.snes-pad .key.long { font-size: 12px; }
+.snes-pad .key.xlong { font-size: 9.5px; }
+.snes-pad [data-btn="l"] .key, .snes-pad [data-btn="r"] .key { fill: #1d1d22; }
+.snes-pad [data-btn="b"] .key { fill: #2a2206; }
+.snes-pad .pad-btn { cursor: pointer; outline: none; }
+.snes-pad .pad-btn:hover > :first-child, .snes-pad .pad-btn:focus-visible > :first-child { filter: brightness(1.25); }
+.snes-pad .pad-btn:focus-visible > :first-child { stroke: var(--accent); stroke-width: 3; }
+.snes-pad .pad-btn.listening > :first-child { stroke: var(--accent); stroke-width: 4; animation: pad-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes pad-pulse { from { filter: brightness(1); } to { filter: brightness(1.6); } }
+.help .pad-hint { color: var(--text); min-height: 1.5em; margin: 8px 0 4px; text-align: center; }
+.pad-actions { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin: 0 0 12px; font-size: 14px; }
+.pad-actions .link { margin-left: 0; }
