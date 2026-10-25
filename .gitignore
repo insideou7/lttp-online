@@ -13,4 +13,4 @@ work/
 # Web client build output
 web/.cache/
 web/dist/
-web/.wrangler/
+.wrangler/
