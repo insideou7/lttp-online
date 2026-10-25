@@ -100,7 +100,7 @@ export function captureLink(ram, video) {
   return { ox, oy, w, h, c: colors, p: toBase64(px) };
 }
 
-function toBase64(bytes) {
+export function toBase64(bytes) {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);

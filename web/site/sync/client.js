@@ -13,6 +13,7 @@
 //                       still sees the others.
 import { FIELDS, FIELD_BY_KEY, applyOp, diff, snapshot, describeOp } from './fields.js';
 import { PresenceSender, RemotePlayers } from './presence.js';
+import { MobSync } from './mobs.js';
 
 const TICK_MS = 100;
 const PRESENCE_MS = 66;   // position updates: 15 a second, only when something moved
@@ -34,6 +35,7 @@ export class SyncClient {
     this.serverVersion = 0;
     this.presence = backend.video ? new PresenceSender(backend) : null;
     this.remote = new RemotePlayers();   // other players' Links, for drawing
+    this.mobs = new MobSync(backend, (msg) => this.send(msg));   // shared enemies
   }
 
   start() {
@@ -81,6 +83,7 @@ export class SyncClient {
       if (this.known) this.offline = this.known;
       this.known = null;
       this.remote.clear();
+      this.mobs.reset();
       this.syncSent = false;
       if (this.closed) return;
       this.status(opened ? 'reconnecting' : 'unreachable');
@@ -104,6 +107,7 @@ export class SyncClient {
         this.players = msg.players;
         this.serverVersion = msg.v ?? 1;
         this.presence?.reset();
+        this.mobs.reset();
         this.status('connected');
         break;
       case 'players':
@@ -115,6 +119,15 @@ export class SyncClient {
         break;
       case 'pos':
         this.remote.onPos(msg.from, msg.p);
+        break;
+      case 'owner':
+        this.mobs.onOwner(msg);
+        break;
+      case 'mobs':
+        this.mobs.onMobs(msg);
+        break;
+      case 'hit':
+        this.mobs.onHit(msg);
         break;
       case 'synced':
         this.onSynced(msg.state);
@@ -190,9 +203,11 @@ export class SyncClient {
   // Where this player's Link is and what he looks like (servers from before
   // protocol 2 don't relay it).
   presenceTick() {
-    if (!this.presence || this.serverVersion < 2 || !this.ws || this.ws.readyState !== 1) return;
-    const p = this.presence.next();
+    if (this.serverVersion < 2 || !this.ws || this.ws.readyState !== 1) return;
+    const p = this.presence?.next();
     if (p !== undefined) this.send({ t: 'pos', p });
+    // Shared enemies need protocol 3.
+    if (this.serverVersion >= 3) this.mobs.tick(this.you);
   }
 
   tick() {

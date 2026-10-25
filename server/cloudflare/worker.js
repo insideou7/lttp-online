@@ -5,6 +5,7 @@
 // being unloaded, and is deleted 12 hours after the last player leaves.
 import { Room, isRoomCode } from '../../web/site/sync/room.js';
 
+const LIVE = new Set(['pos', 'at', 'mobs', 'hit']);
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 
 export default {
@@ -45,8 +46,8 @@ export class SyncRoom {
     ws.addEventListener('message', (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch { ws.close(1003); return; }
-      // Positions (most messages) never change the saved progress.
-      if (msg?.t === 'pos') { this.deliver(this.room.message(id, msg)); return; }
+      // Positions and enemies (most messages) never change the saved progress.
+      if (LIVE.has(msg?.t)) { this.deliver(this.room.message(id, msg)); return; }
       const before = JSON.stringify(this.room.state);
       this.deliver(this.room.message(id, msg));
       const after = JSON.stringify(this.room.state);
