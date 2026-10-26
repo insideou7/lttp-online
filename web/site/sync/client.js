@@ -8,14 +8,15 @@
 //   backend.inGame()    true while a save file is loaded and being played
 //   backend.refresh(kinds)  optional: redraw after a remote change, kinds is a
 //                       Set of 'hud' | 'sword' | 'shield' | 'armor'
-//   backend.video       optional: video memory, to show this player's Link to
-//                       the others (see presence.js). Without it the player
-//                       still sees the others.
+//   backend.video       optional: video memory, to show this player's Link and
+//                       text boxes to the others (see presence.js, dialogs.js).
+//                       Without it the player still sees the others.
 import { FIELDS, FIELD_BY_KEY, applyOp, diff, snapshot, describeOp } from './fields.js';
 import { PresenceSender, RemotePlayers } from './presence.js';
 import { MobSync } from './mobs.js';
 import { RoomTiles } from './tiles.js';
 import { patchMessages } from './seed-share.js';
+import { DialogSender, RemoteDialogs } from './dialogs.js';
 
 const TICK_MS = 100;
 const PRESENCE_MS = 66;   // position updates: 15 a second, only when something moved
@@ -43,6 +44,8 @@ export class SyncClient {
     this.remote = new RemotePlayers();   // other players' Links, for drawing
     this.mobs = new MobSync(backend, (msg) => this.send(msg));   // shared enemies
     this.tiles = new RoomTiles(backend, (msg) => this.send(msg)); // shared pots, switches...
+    this.dialogs = new DialogSender(backend, (msg) => this.send(msg)); // this player's text boxes
+    this.remoteDialogs = new RemoteDialogs();                         // the others', for drawing
   }
 
   start() {
@@ -90,6 +93,7 @@ export class SyncClient {
       if (this.known) this.offline = this.known;
       this.known = null;
       this.remote.clear();
+      this.remoteDialogs.clear();
       this.mobs.reset();
       this.tiles.reset();
       this.syncSent = false;
@@ -116,6 +120,7 @@ export class SyncClient {
         this.serverVersion = msg.v ?? 1;
         this.roomGame = msg.game ?? null;
         this.presence?.reset();
+        this.dialogs.reset();
         this.mobs.reset();
         this.tiles.reset();
         this.status('connected');
@@ -125,10 +130,14 @@ export class SyncClient {
         // A newcomer needs our position and pose images again.
         this.presence?.reset();
         this.remote.retain(msg.players.map((p) => p.id));
+        this.remoteDialogs.retain(msg.players.map((p) => p.id));
         this.status('connected');
         break;
       case 'pos':
         this.remote.onPos(msg.from, msg.p);
+        break;
+      case 'dlg':
+        this.remoteDialogs.onDlg(msg.from, msg.k, msg.d);
         break;
       case 'owner':
         this.mobs.onOwner(msg);
@@ -245,6 +254,8 @@ export class SyncClient {
       this.mobs.tick(this.you);
       this.tiles.tick(this.you, this.mobs.owner);
     }
+    // Text boxes need protocol 6.
+    if (this.serverVersion >= 6) this.dialogs.tick();
   }
 
   tick() {

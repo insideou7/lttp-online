@@ -20,6 +20,9 @@
 //                                          or made a new sprite there (n)
 //     { t: 'tiles', k, b, c, f? }          surroundings changed (tiles.js) at place b:
 //                                          pairs of RAM address and byte; f = all so far
+//     { t: 'dlg', k, d }                   a text box is up (dialogs.js): d = the box,
+//                                          deflated, base64; null = closed. k = the
+//                                          area the player was last in; v6+
 //   Seed sharing (v5+, see seed-share.js). A page that hasn't joined yet asks
 //   what the room plays; a player who has the seed sends it as a patch against
 //   the original game, so no ROM ever goes through the server:
@@ -39,6 +42,7 @@
 //     { t: 'mobs', from, k, d }            the enemies at k, from their owner
 //     { t: 'hit', from, k, s, d }          to the owner: another player hit slot s
 //     { t: 'tiles', from, k, b, c, f? }    surroundings another player changed
+//     { t: 'dlg', from, k, d }             another player's text box, to the players at k
 //     { t: 'seed-info', game, sending }    reply to seed-get; sending = a player was
 //                                          asked to send the patch (false: nobody can)
 //     { t: 'seed-want', to }               to a sharing player: send the patch to `to`
@@ -47,11 +51,12 @@
 //     { t: 'error', message }
 import { FIELDS, FIELD_BY_KEY, applyOp, validOp, emptyValue, isArrayKind } from './fields.js';
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 // What clients from before protocol 4 play (only zelda3, the US game, existed).
 export const VANILLA_GAME = { id: 'lttp-us', label: 'A Link to the Past (US)' };
 const MAX_MOBS_B64 = 4096;
 const MAX_TILE_PAIRS = 0x2000;
+const MAX_DLG_B64 = 8192;   // a deflated text box is usually under 2 KB
 const MAX_PLAYERS = 8;
 const MAX_NAME = 24;
 // A shared seed's patch: an ALttPR seed's is about 90 KB deflated, so this
@@ -106,6 +111,7 @@ export class Room {
     const old = p.at ?? null;
     if (old === k) return [];
     p.at = k;
+    if (k !== null) p.was = k;   // where a paused player (e.g. reading text) still is
     const out = [];
     if (old !== null) {
       const left = this.playersAt(old);
@@ -205,6 +211,16 @@ export class Room {
             !c.every((v, i) => int(v, 0, i % 2 ? 0xff : 0x1ffff))) return err('bad tiles');
         return this.playersAt(k).filter((to) => to !== id)
           .map((to) => ({ to, msg: { t: 'tiles', from: id, k, b, c, ...(msg.f ? { f: 1 } : {}) } }));
+      }
+      case 'dlg': {
+        // Sent while the game is paused for the text, so the player's area
+        // reads null: the box goes to the area they were last in.
+        const k = areaKey(msg.k);
+        const d = msg.d;
+        if (k === undefined || this.players.get(id).was !== k) return [];
+        if (d !== null && !(typeof d === 'string' && d.length <= MAX_DLG_B64 && /^[A-Za-z0-9+/]*=*$/.test(d))) return err('bad dlg');
+        return this.playersAt(k).filter((to) => to !== id)
+          .map((to) => ({ to, msg: { t: 'dlg', from: id, k, d } }));
       }
       case 'seed-get': {
         const p = this.players.get(id);
