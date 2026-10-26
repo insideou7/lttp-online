@@ -36,6 +36,9 @@ the game in their browser and goes wherever they like; a small server relays onl
    doors and lit torches change for everyone in the room. Outdoors: cut or lifted bushes, lifted
    rocks and signs, dug holes, bombed walls and hammered pegs. Anyone who arrives later sees the
    place as it is.
+7. Text boxes are shared: when someone in your room or area talks to a person, reads a sign or
+   gets an item, you see their text box too, with their name on it. It's only a picture over your
+   screen: your game keeps running, and the box goes away when they close it.
 
 No accounts: a room is just its code. The server keeps a room's progress in memory for 12 hours
 after the last player leaves. In-game saves keep everything as usual, in each player's browser.
@@ -117,6 +120,16 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
   survive a trip indoors. The area's enemy host also sends every change since it arrived to each
   newcomer. Items that pop out of a pot or bush a non-host lifted, and things they throw, are
   handed to the host as new sprites (`hit` with `n`), so they don't vanish.
+- `web/site/sync/dialogs.js`: shared text boxes (protocol 6). While a player's game shows a text
+  box (module $0E, submodule 2, text renderer state `$1CD4` = 3), the client copies the box out of
+  VRAM as the game drew it: the BG3 tilemap from its top left corner (`$1CD2`), 8 tiles high and as
+  wide as its border (24 tiles in the US game, 23 in the Japanese one and randomizers), with the 2bpp
+  tiles at VRAM $7000 and colors from CGRAM. So any text shows, in any language or randomizer. It's
+  deflated (usually under 2 KB) and sent as `dlg` with the area the player was in when the box
+  opened (their game is paused, so they're in no area meanwhile); the server relays it to the
+  players there. It's sent again when it changes (at most about 8 times a second) and every second
+  while it's up, and `d: null` when it closes; a box nobody repeated for 3 s disappears. `ghosts.js`
+  draws it where it sits on the speaker's screen, with their name, unless you have a box of your own.
 - Backends: the client only needs `ram.get/set`, `inGame()` and an optional `refresh()`.
   `zelda3-backend.js` reads the WASM heap and calls `web_refresh()` (in `web/src/web_api.c`) to
   redraw the HUD, sword, shield and armor after a remote change. To show your Link to others a
@@ -181,6 +194,8 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
 - Overworld changes are shared while players are in the same 512x512 block of an area; someone
   in another block of a big area catches up when they walk into the host's block.
 
+- You see another player's text box only while you're in the same dungeon room or 512x512 block of
+  an overworld area as they were. Their Link disappears while they read it, as in any menu.
 - Other players are drawn over everything, including the HUD and things they'd walk behind
   (doorways, tree tops). Their Link is shown with whatever he carries over his head (a pot, bush or
   rock); the people who follow them (Zelda, the old man) aren't.
