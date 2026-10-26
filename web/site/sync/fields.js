@@ -23,6 +23,17 @@ const u8 = (addr) => ({
   read: (ram) => ram.get(addr),
   write: (ram, v) => ram.set(addr, v),
 });
+// A 16-bit little-endian value.
+const u16 = (addr) => ({
+  read: (ram) => ram.get(addr) | (ram.get(addr + 1) << 8),
+  write: (ram, v) => { ram.set(addr, v & 0xff); ram.set(addr + 1, (v >> 8) & 0xff); },
+});
+// Only some bits of a byte; the rest stay the player's own.
+const someBits = (addr, mask) => ({
+  kind: 'bits', len: 1,
+  read: (ram) => [ram.get(addr) & mask],
+  write: (ram, [m]) => ram.set(addr, (ram.get(addr) & ~mask & 0xff) | (m & mask)),
+});
 
 // Index into the per-dungeon key counts of the dungeon Link is in, or -1.
 // $7E040C is the dungeon number times two, 0xFF outside dungeons.
@@ -114,18 +125,42 @@ export const FIELDS = [
       // game saves it back before unloading it (0xFF), so the saved array is
       // right whenever the copy isn't loaded.
       const d = curDungeon(ram), live = ram.get(0xF36F);
-      if (d >= 0 && live !== 0xFF) a[d] = live;
+      // With universal keys the copy is the generic count (genericKeys below).
+      if (d >= 0 && live !== 0xFF && !ram.genericKeys) a[d] = live;
       return a;
     },
     write: (ram, a) => {
       for (let i = 0; i < 14; i++) ram.set(0xF37C + i, a[i]);
       const d = curDungeon(ram);
-      if (d >= 0 && ram.get(0xF36F) !== 0xFF) ram.set(0xF36F, a[d]);
+      if (d >= 0 && ram.get(0xF36F) !== 0xFF && !ram.genericKeys) ram.set(0xF36F, a[d]);
     },
     addAt: (ram, i, delta) => {
       const clamp = (v) => Math.max(0, Math.min(99, v + delta));
       ram.set(0xF37C + i, clamp(ram.get(0xF37C + i)));
-      if (curDungeon(ram) === i && ram.get(0xF36F) !== 0xFF) ram.set(0xF36F, clamp(ram.get(0xF36F)));
+      if (curDungeon(ram) === i && ram.get(0xF36F) !== 0xFF && !ram.genericKeys) ram.set(0xF36F, clamp(ram.get(0xF36F)));
+    },
+  },
+  // Randomizer "retro" mode (universal keys, ram.genericKeys): one key count
+  // for every dungeon at $7EF38B. The game keeps $7EF36F equal to it and
+  // works on that copy inside dungeons, so the copy is the live count.
+  {
+    key: 'genericKeys', kind: 'counts', len: 1, max: 99, label: 'Small Key', refresh: 'hud',
+    read: (ram) => {
+      if (!ram.genericKeys) return [0];
+      const live = ram.get(0xF36F);
+      return [live !== 0xFF ? live : ram.get(0xF38B)];
+    },
+    write: (ram, [n]) => {
+      if (!ram.genericKeys) return;
+      ram.set(0xF38B, n);
+      if (ram.get(0xF36F) !== 0xFF) ram.set(0xF36F, n);
+    },
+    addAt: (ram, i, delta) => {
+      if (!ram.genericKeys || i !== 0) return;
+      const live = ram.get(0xF36F);
+      const n = Math.max(0, Math.min(99, (live !== 0xFF ? live : ram.get(0xF38B)) + delta));
+      ram.set(0xF38B, n);
+      if (live !== 0xFF) ram.set(0xF36F, n);
     },
   },
 
@@ -170,15 +205,57 @@ export const FIELDS = [
     write: (ram, [m]) => ram.set(0xF38C, (ram.get(0xF38C) & 0x20) | (m & ~0x20 & 0xff)),
   },
   { key: 'bowFlags', kind: 'bits', addr: 0xF38E, len: 1, refresh: 'hud' },
+  // $7EF38D 02: a bomb was found (modes that start without bombs).
+  { key: 'bombFound', ...someBits(0xF38D, 0x02), refresh: 'hud' },
+
+  // More randomizer-only progress, from the randomizer's own save layout
+  // (z3randomizer sram.asm). Each counts something only one player can pick
+  // up, since the places items come from are shared, so the counts add up.
+  //
+  // Items with a limited number of copies (a second lamp turns into
+  // something else), counted per kind.
+  { key: 'itemLimits', kind: 'counts', addr: 0xF390, len: 16, max: 255 },
+  // NPCs and tablets that already gave their item: library, catfish,
+  // Sahasrahla, Stumpy, sick kid, King Zora, old man / magic bat, potion
+  // shop, Lost Woods mushroom, smith, Bombos and Ether tablets.
+  { key: 'npcItems', kind: 'bits', addr: 0xF410, len: 2 },
+  // Dungeon prizes shown on the map (Sahasrahla, bomb shop, maps).
+  { key: 'mapOverlay', kind: 'bits', addr: 0xF414, len: 2 },
+  // Dungeon prizes taken, so no one else's boss drops it again.
+  { key: 'dungeonsDone', kind: 'bits', addr: 0xF472, len: 2 },
+  // The bird after Agahnim 2.
+  { key: 'aga2Duck', kind: 'max', ...u8(0xF40F) },
+  // The Haunted Grove item was dug up.
+  { key: 'groveItem', ...someBits(0xF416, 0x01) },
+  // Highest sword, shield and mail found, for progressive items.
+  { key: 'highestSword', kind: 'max', ...u8(0xF417) },
+  { key: 'highestShield', kind: 'max', ...u8(0xF422) },
+  { key: 'highestMail', kind: 'max', ...u8(0xF46E) },
+  // Triforce Hunt pieces (16-bit), shown on the HUD and counted by Murahdahla.
+  { key: 'triforce', kind: 'sum', max: 999, ...u16(0xF418), label: 'a Triforce Piece', refresh: 'hud' },
+  // Items collected (16-bit): the HUD's item counter and the "collect
+  // everything" goal.
+  { key: 'itemCount', kind: 'sum', max: 9999, ...u16(0xF423), refresh: 'hud' },
+  // Pendants and crystals found: the randomizer checks these counts, not the
+  // bits above, to open Ganon's Tower and the pedestal and to hurt Ganon.
+  { key: 'pendantCount', kind: 'sum', max: 255, ...u8(0xF429) },
+  { key: 'crystalCount', kind: 'sum', max: 255, ...u8(0xF476) },
+  // Per dungeon: locations checked (the "items left" number with the
+  // compass) and small keys found in chests (keysanity's key total).
+  { key: 'dungeonChecks', kind: 'counts', addr: 0xF4C0, len: 16, max: 255, refresh: 'hud' },
+  { key: 'dungeonKeysFound', kind: 'counts', addr: 0xF4E0, len: 16, max: 255, refresh: 'hud' },
 ];
 
 export const FIELD_BY_KEY = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
 
 // Plain byte-array fields read and write their address range directly.
 for (const f of FIELDS) {
-  if (f.kind === 'bits' && !f.read) {
+  if ((f.kind === 'bits' || f.kind === 'counts') && !f.read) {
     f.read = (ram) => { const a = []; for (let i = 0; i < f.len; i++) a.push(ram.get(f.addr + i)); return a; };
     f.write = (ram, a) => { for (let i = 0; i < f.len; i++) ram.set(f.addr + i, a[i]); };
+  }
+  if (f.kind === 'counts' && !f.addAt) {
+    f.addAt = (ram, i, delta) => ram.set(f.addr + i, Math.max(0, Math.min(f.max, ram.get(f.addr + i) + delta)));
   }
 }
 
