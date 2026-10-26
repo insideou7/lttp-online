@@ -29,6 +29,8 @@ const REFRESH_ROUTINES = {
   armor: ['armorPal'],
 };
 
+const GENERIC_KEYS_FLAG = 0x180172;
+
 // LoROM address -> offset in a header-less ROM.
 const romOffset = (adr) => ((adr >> 16) & 0x7f) * 0x8000 + (adr & 0x7fff);
 
@@ -54,6 +56,9 @@ export function snesBackend(emu) {
   const ram = {
     get: (addr) => heap()[emu.ram() + addr],
     set: (addr, v) => { heap()[emu.ram() + addr] = v; },
+    // Randomizer "retro" seeds: one small key count for every dungeon
+    // (z3randomizer's GenericKeys flag, ROM offset $180172). See fields.js.
+    genericKeys: emu.rom.length > GENERIC_KEYS_FLAG && emu.rom[GENERIC_KEYS_FLAG] === 1,
   };
   const u16 = (ptr, i) => heap()[ptr + i * 2] | (heap()[ptr + i * 2 + 1] << 8);
   const video = {

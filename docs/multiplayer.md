@@ -146,12 +146,30 @@ Locally: `cd server/cloudflare && npx wrangler@4 dev` serves the same endpoint o
 - Randomizer-only items: `swapItems` ($7EF38C, which of the items sharing a menu slot you own,
   minus the mushroom the witch takes) and `bowFlags` ($7EF38E) are shared bits. They stay zero in
   the plain game.
+- Randomizer-only progress, from z3randomizer's save layout (`sram.asm`), also zero in the plain
+  game. Each counts pickups from shared item locations, so only one player can make each gain and
+  the counts add up:
+  - `triforce` ($7EF418, 16-bit sum): Triforce Hunt pieces. `itemCount` ($7EF423, 16-bit sum): the
+    HUD item counter and the collect-everything goal.
+  - `pendantCount` ($7EF429) and `crystalCount` ($7EF476), sums: the randomizer checks these, not
+    the pendant/crystal bits, to open Ganon's Tower and the pedestal and to make Ganon hittable.
+  - `dungeonChecks` ($7EF4C0) and `dungeonKeysFound` ($7EF4E0), per-dungeon counts: locations
+    checked and chest keys found, the "left" and keysanity key totals on the HUD. `itemLimits`
+    ($7EF390), counts: copies found of limited items.
+  - Bits: `npcItems` ($7EF410, NPCs and tablets that gave their item; without it each player could
+    collect them again), `mapOverlay` ($7EF414), `dungeonsDone` ($7EF472, prizes taken),
+    `groveItem` ($7EF416 bit 0), `bombFound` ($7EF38D bit 1). Max: `aga2Duck` ($7EF40F) and the
+    highest sword/shield/mail found ($7EF417, $7EF422, $7EF46E) that progressive items go by.
+  - `genericKeys` ($7EF38B, counts): retro mode's universal keys. The emulator backend sets
+    `ram.genericKeys` from the seed's flag at ROM offset $180172; then the live copy at $7EF36F is
+    this count, not the current dungeon's, and `keys` leaves it alone.
+  Stats (deaths, bonks, times) and shop purchase counts stay per player.
 
 ## Known limits
 
-- Randomizer seeds: only progress the plain game also has is shared (plus the swap-item flags).
-  Randomizer-only counters (keysanity key totals, triforce pieces, collected-item count) stay per
-  player. If a randomizer rewrote one of the game's redraw routines, another player's unlock still
+- Randomizer seeds: the randomizer-only fields follow ALttPR's current save layout. Other
+  randomizers built on another layout (door randomizer, Archipelago) may keep things there that
+  aren't these counters. If a randomizer rewrote one of the game's redraw routines, another player's unlock still
   arrives but shows on your HUD or Link only after the next room or area change.
 - Shared enemies: the host's game only has the enemies around its own screen. Enemies your game
   runs that aren't on the host's screen (the host's snapshot carries its camera) stay in your
